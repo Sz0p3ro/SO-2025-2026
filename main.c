@@ -51,6 +51,70 @@ void handle_sigint(int sig) {
 	exit(0); // To wywola funkcje zarejestrowana w atexit(sprzataj)
 }
 
+// --- LOGIKA KASY SAMOOBSLUGOWEJ
+
+void proces_kasa_samoobslugowa(int nr_kasy) {
+	// nr_kasy to indeks od 0 do 5
+	printf("Kasa samoobslugowa %d startuje (PID: %d)\n", nr_kasy, getpid());
+
+	char msg_buf[200];
+	Komunikat kom_odb;
+	Komunikat kom_nad;
+	struct sembuf operacje[1];
+
+	while (1) {
+		// 1. Czekanie na klienta (msgrcv blokuje proces az cos przyjdzie)
+		// Typ 1 = kolejka do kas samoobslugowych
+		if (msgrcv(msgid, &kom_odb, sizeof(Komunikat) - sizeof(long), 1, 0) == -1) {
+			if (errno == EINTR) continue; // Przerwanie sygnalem, ponow
+			perror("msgrcv kasa");
+			exit(1);
+		}
+
+		// 2. Aktualizacja statusu kasy (ZAJETA) i zmniejszenie kolejki
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = -1;
+		operacje[0].sem_flg = 0;
+		semop(semid, operacje, 1);
+
+		stan_sklepu->kasy_samoobslugowe_status[nr_kasy] = kom_odb.id_klienta;
+		if (stan_sklepu->kolejka_samoobslugowa_len > 0)
+			stan_sklepu->kolejka_samoobslugowa_len--;
+
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+
+		sprintf(msg_buf, "Kasa Samoobsl. %d: Obsluguje klienta %d (Prod: %d, Alk: %d)",
+				nr_kasy, kom_odb.id_klienta, kom_odb.liczba_produktow, kom_odb.czy_alkohol);
+		loguj(msg_buf);
+
+		// 3. Symulacja kasowania (czas zalezy od liczby produktow)
+		// Np. 0.1 sekundy na produkt
+		usleep(kom_odb.liczba_produktow * 100000);
+
+		// 4. Wyslanie potwierdzenia do klienta
+		kom_nad.mtype = kom_odb.id_klienta; // Wysylam na kanal konkretnego procesu
+		kom_nad.id_klienta = getpid();      // W polu ID wpisuje PID kasy (informacyjnie)
+
+		if (msgsnd(msgid, &kom_nad, sizeof(Komunikat) - sizeof(long), 0) == -1) {
+			perror("msgsnd kasa reply");
+		}
+
+		// 5. Zwolnienie kasy
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+
+		stan_sklepu->kasy_samoobslugowe_status[nr_kasy] = 0;
+
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+
+		// Krotka przerwa przed nastepnym klientem
+		usleep(100000);
+	}
+}
+
 // --- LOGIKA KLIENTA ---
 
 void proces_klient() {
@@ -86,13 +150,24 @@ void proces_klient() {
 
 	// Decyzja: 95% samoobslugowa, 5% stacjonarna
 	int los = rand() % 100;
+
+	operacje[0].sem_op = -1; // P
+	semop(semid, operacje, 1);
+
 	if (los < 95) {
 		kom.mtype = 1; // 1 = Kasa Samoobslugowa
+		stan_sklepu->kolejka_samoobslugowa_len++; // zwiekszam licznik kolejki samoobsl.
 		sprintf(msg_buf, "Klient %d idzie do samoobslugowej (Prod: %d, Alk: %d)", my_pid, kom.liczba_produktow, kom.czy_alkohol);
 	} else {
 		kom.mtype = 2; // 2 = Kasa Stacjonarna
+		// na razie byle gdzie potem zrobic logike
+		stan_sklepu->kolejka_stacjonarna_len[0]++;
 		sprintf(msg_buf, "Klient %d idzie do stacjonarnej (Prod: %d)", my_pid, kom.liczba_produktow);
 	}
+
+	operacje[0].sem_op = 1; // V
+	semop(semid, operacje, 1);
+
 	loguj(msg_buf);
 
 	// 4. Ustawienie sie w kolejce (Wyslanie komunikatu)
@@ -109,7 +184,7 @@ void proces_klient() {
 		exit(1);
 	}
 
-	sprintf(msg_buf, "Klient %d obsluzony. Wychodze.", my_pid);
+	sprintf(msg_buf, "Klient %d obsluzony przez %d. Wychodze.", my_pid, (int)odpowiedz.id_klienta);
 	loguj(msg_buf);
 
 	// 6. Wyjscie ze sklepu (Dekrementacja licznika)
@@ -208,6 +283,14 @@ int main() {
 	if(f) { fprintf(f, "START SYMULACJI\n"); fclose(f); }
 
 	printf("IPC zainicjalizowane. Start procesow...\n");
+
+	// 1. Uruchomienie Kas Samoobslugowych (6 procesow)
+	for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
+		if (fork() == 0) {
+			proces_kasa_samoobslugowa(i);
+			exit(0); // Dla pewnosci
+		}
+	}
 
 	// 6. Uruchomienie Generatora Klientow
 	pid_t pid_gen = fork();
