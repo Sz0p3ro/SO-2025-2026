@@ -127,14 +127,15 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 
 				// Jesli ktos z obslugi zmienil status na inny niz -1, to naprawione
 				if (status != -1) {
-					loguj("Kasa Samoobsl. %d: Naprawiona! Wznawiam prace.");
+					sprintf(msg_buf, "Kasa Samoobsl. %d: Naprawiona! Wznawiam prace.", nr_kasy);
+					loguj(msg_buf);
 					break;
 				}
 			}
 		}
 		// 4. Wyslanie potwierdzenia do klienta
 		kom_nad.mtype = kom_odb.id_klienta; // Wysylam na kanal konkretnego procesu
-		kom_nad.id_klienta = getpid();      // W polu ID wpisuje PID kasy dla informacji
+		kom_nad.id_klienta = nr_kasy;      // W polu ID wpisuje nr kasy ktora zostala uzyta
 
 		if (msgsnd(msgid, &kom_nad, sizeof(Komunikat) - sizeof(long), 0) == -1) {
 			perror("msgsnd kasa reply");
@@ -152,6 +153,58 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 
 		// Krotka przerwa przed nastepnym klientem
 		usleep(100000);
+	}
+}
+
+// --- PRACOWNIK OBSLUGI ---
+
+void proces_obsluga() {
+	printf("Pracownik obslugi zaczyna prace (PID: %d)\n", getpid());
+
+	struct sembuf operacje[1];
+	char msg_buf[100];
+
+	while (1) {
+		// Pracownik co chwile sprawdza wszystkie kasy
+		for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
+
+			// 1. Sprawdzenie czy jest awaria?
+			int status;
+			operacje[0].sem_num = SEM_STAN;
+			operacje[0].sem_op = -1; // P
+			operacje[0].sem_flg = 0;
+			semop(semid, operacje, 1);
+
+			status = stan_sklepu->kasy_samoobslugowe_status[i];
+
+			operacje[0].sem_op = 1; // V
+			semop(semid, operacje, 1);
+
+			// 2. Reakcja na awarie (-1)
+			if (status == -1) {
+				sprintf(msg_buf, "Obsluga: Wykryto awarie w kasie %d. Naprawiam...", i);
+				loguj(msg_buf);
+
+				// Symulacja naprawy (np. 1 sekunda)
+				sleep(2);
+
+				// Zmiana statusu na 0 (WOLNA)
+				operacje[0].sem_num = SEM_STAN;
+				operacje[0].sem_op = -1;
+				semop(semid, operacje, 1);
+
+				stan_sklepu->kasy_samoobslugowe_status[i] = 0; // Odblokowanie kasy
+
+				operacje[0].sem_op = 1;
+				semop(semid, operacje, 1);
+
+				sprintf(msg_buf, "Obsluga: Kasa %d naprawiona.", i);
+				loguj(msg_buf);
+			}
+		}
+
+		// przerwa miedzy obchodami sklepu
+		usleep(500000); // 0.5 sekundy
 	}
 }
 
@@ -197,12 +250,12 @@ void proces_klient() {
 	if (los < 95) {
 		kom.mtype = 1; // 1 = Kasa Samoobslugowa
 		stan_sklepu->kolejka_samoobslugowa_len++; // zwiekszam licznik kolejki samoobsl.
-		sprintf(msg_buf, "Klient %d idzie do samoobslugowej (Prod: %d, Alk: %d)", my_pid, kom.liczba_produktow, kom.czy_alkohol);
+		sprintf(msg_buf, "Klient %d idzie do samoobslugowej (Prod: %d, Alk: %d)", nr_klienta, kom.liczba_produktow, kom.czy_alkohol);
 	} else {
 		kom.mtype = 2; // 2 = Kasa Stacjonarna
 		// na razie byle gdzie potem zrobic logike
 		stan_sklepu->kolejka_stacjonarna_len[0]++;
-		sprintf(msg_buf, "Klient %d idzie do stacjonarnej (Prod: %d)", my_pid, kom.liczba_produktow);
+		sprintf(msg_buf, "Klient %d idzie do stacjonarnej (Prod: %d)", nr_klienta, kom.liczba_produktow);
 	}
 
 	operacje[0].sem_op = 1; // V
@@ -224,7 +277,7 @@ void proces_klient() {
 		exit(1);
 	}
 
-	sprintf(msg_buf, "Klient %d obsluzony przez %d. Wychodze.", my_pid, (int)odpowiedz.id_klienta);
+	sprintf(msg_buf, "Klient %d obsluzony przez kase nr %d. Wychodze.", nr_klienta, (int)odpowiedz.id_klienta);
 	loguj(msg_buf);
 
 	// 6. Wyjscie ze sklepu (Dekrementacja licznika)
@@ -324,7 +377,7 @@ int main() {
 
 	printf("IPC zainicjalizowane. Start procesow...\n");
 
-	// 1. Uruchomienie Kas Samoobslugowych (6 procesow)
+	// 6. Uruchomienie Kas Samoobslugowych (6 procesow)
 	for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
 		if (fork() == 0) {
 			proces_kasa_samoobslugowa(i);
@@ -332,7 +385,13 @@ int main() {
 		}
 	}
 
-	// 6. Uruchomienie Generatora Klientow
+	// 7. Uruchomienie pracownika obslugi
+	if (fork() == 0) {
+		proces_obsluga();
+		exit(0);
+	}
+
+	// 8. Uruchomienie Generatora Klientow
 	pid_t pid_gen = fork();
 	if (pid_gen == 0) {
 		generator_klientow();
