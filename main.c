@@ -62,6 +62,9 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 	Komunikat kom_nad;
 	struct sembuf operacje[1];
 
+	// Ziarno losowosci unikalne dla procesu
+	srand(time(NULL) ^ getpid());
+
 	while (1) {
 		// 1. Czekanie na klienta (msgrcv blokuje proces az cos przyjdzie)
 		// Typ 1 = kolejka do kas samoobslugowych
@@ -92,9 +95,46 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 		// Np. 0.1 sekundy na produkt
 		usleep(kom_odb.liczba_produktow * 100000);
 
+		// SYMULACJA AWARII
+		// 10% szans na awarie
+		if (rand() % 100 < 10) {
+			sprintf(msg_buf, "Kasa Samoobsl. %d: AWARIA! Blokada kasy.", nr_kasy);
+			loguj(msg_buf);
+
+			// Ustawienie flagi awarii (-1)
+			operacje[0].sem_num = SEM_STAN;
+			operacje[0].sem_op = -1;
+			semop(semid, operacje, 1);
+
+			stan_sklepu->kasy_samoobslugowe_status[nr_kasy] = -1;
+
+			operacje[0].sem_op = 1;
+			semop(semid, operacje, 1);
+
+			// Czekanie na naprawe
+			while (1) {
+				sleep(1); // Czekamy sekunde i sprawdzamy status
+
+				int status;
+				operacje[0].sem_num = SEM_STAN;
+				operacje[0].sem_op = -1;
+				semop(semid, operacje, 1);
+
+				status = stan_sklepu->kasy_samoobslugowe_status[nr_kasy];
+
+				operacje[0].sem_op = 1;
+				semop(semid, operacje, 1);
+
+				// Jesli ktos z obslugi zmienil status na inny niz -1, to naprawione
+				if (status != -1) {
+					loguj("Kasa Samoobsl. %d: Naprawiona! Wznawiam prace.");
+					break;
+				}
+			}
+		}
 		// 4. Wyslanie potwierdzenia do klienta
 		kom_nad.mtype = kom_odb.id_klienta; // Wysylam na kanal konkretnego procesu
-		kom_nad.id_klienta = getpid();      // W polu ID wpisuje PID kasy (informacyjnie)
+		kom_nad.id_klienta = getpid();      // W polu ID wpisuje PID kasy dla informacji
 
 		if (msgsnd(msgid, &kom_nad, sizeof(Komunikat) - sizeof(long), 0) == -1) {
 			perror("msgsnd kasa reply");
