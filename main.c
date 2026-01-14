@@ -371,6 +371,50 @@ void proces_kasa_stacjonarna(int nr_kasy) {
 	}
 }
 
+// --- LOGIKA KIEROWNIKA
+void proces_kierownik() {
+	printf("Kierownik sklepu zaczyna prace (PID: %d)\n", getpid());
+
+	struct sembuf operacje[1];
+	char msg_buf[200];
+
+	while (1) {
+		// 1. Pobranie danych o kolejkach i statusach (Sekcja Krytyczna)
+		int len_kolejki_0;
+		int status_kasy_0;
+
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+
+		len_kolejki_0 = stan_sklepu->kolejka_stacjonarna_len[0];
+		status_kasy_0 = stan_sklepu->kasy_stacjonarne_status[0];
+
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+
+		// 2. Otwieranie Kasy 1 (indeks 0), jesli kolejka > 3
+		if (status_kasy_0 == 0 && len_kolejki_0 > 3) {
+			sprintf(msg_buf, "Kierownik: Kolejka do Kasy 1 ma %d osob. OTWIERAM Kase 1.", len_kolejki_0);
+			loguj(msg_buf);
+
+			// Otwarcie kasy
+			operacje[0].sem_num = SEM_STAN;
+			operacje[0].sem_op = -1;
+			semop(semid, operacje, 1);
+
+			stan_sklepu->kasy_stacjonarne_status[0] = 1; // 1 = Otwarta
+
+			operacje[0].sem_op = 1;
+			semop(semid, operacje, 1);
+		}
+
+		// Tu dodac obsluge sygnalow (kasa 2, ewakuacja)
+
+		sleep(1); // kierownik sprawdza stan kolejki co sekunde
+	}
+}
+
 // --- LOGIKA KLIENTA ---
 
 void proces_klient() {
@@ -380,7 +424,7 @@ void proces_klient() {
 	// 1. Wejscie do sklepu (Aktualizacja licznika w Pamieci Dzielonej)
 	struct sembuf operacje[1];
 	operacje[0].sem_num = SEM_STAN;
-	operacje[0].sem_op = -1; // P (zablokuj dostep do stanu)
+	operacje[0].sem_op = -1; // P
 	operacje[0].sem_flg = 0;
 	CHECK(semop(semid, operacje, 1), "semop P stan");
 
@@ -388,7 +432,7 @@ void proces_klient() {
 	stan_sklepu->id_generator++;
 	int nr_klienta = stan_sklepu->id_generator;
 
-	operacje[0].sem_op = 1; // V (odblokuj)
+	operacje[0].sem_op = 1; // V
 	CHECK(semop(semid, operacje, 1), "semop V stan");
 
 	char msg_buf[100];
@@ -444,7 +488,7 @@ void proces_klient() {
 	sprintf(msg_buf, "Klient %d obsluzony przez kase nr %d. Wychodze.", nr_klienta, (int)odpowiedz.id_klienta);
 	loguj(msg_buf);
 
-	// 6. Wyjscie ze sklepu (Dekrementacja licznika)
+	// 6. Wyjscie ze sklepu
 	operacje[0].sem_op = -1; // P
 	CHECK(semop(semid, operacje, 1), "semop P stan wyjscie");
 
@@ -467,14 +511,14 @@ void generator_klientow() {
 
 		// Pobranie licznika (sekcja krytyczna)
 		operacje[0].sem_num = SEM_STAN;
-		operacje[0].sem_op = -1;
+		operacje[0].sem_op = -1; // P
 		operacje[0].sem_flg = 0;
 		semop(semid, operacje, 1);
 
 		current_count = stan_sklepu->liczba_klientow_w_sklepie;
 		koniec = stan_sklepu->koniec_symulacji;
 
-		operacje[0].sem_op = 1;
+		operacje[0].sem_op = 1; // V
 		semop(semid, operacje, 1);
 
 		if (koniec) break;
@@ -564,16 +608,17 @@ int main() {
 		}
 	}
 
-	// [TYMCZASOWO] Otwieramy Kase 0 aby przetestowac
-	stan_sklepu->kasy_stacjonarne_status[0] = 1;
+	// 9. Uruchomienie kierownika
+	if (fork() == 0) {
+		proces_kierownik();
+		exit(0);
+	}
 
-	// 8. Uruchomienie Generatora Klientow
+	// 10. Uruchomienie Generatora Klientow
 	pid_t pid_gen = fork();
 	if (pid_gen == 0) {
 		generator_klientow();
 	}
-
-	// Tutaj dodac Kierownika i Kasjerow
 
 	printf("Symulacja dziala. Nacisnij Ctrl+C aby zakonczyc...\n");
 
