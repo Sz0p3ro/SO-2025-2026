@@ -33,6 +33,7 @@
 // Dostep choniony semaforem (SEM_STAN)!
 typedef struct {
 	int liczba_klientow_w_sklepie;
+	int id_generator; // licznik klientow ktory tylko rosnie
 
 	// Liczniki kolejek (dla Kierownika)
 	int kolejka_samoobslugowa_len;

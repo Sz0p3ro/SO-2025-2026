@@ -91,11 +91,48 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 				nr_kasy, kom_odb.id_klienta, kom_odb.liczba_produktow, kom_odb.czy_alkohol);
 		loguj(msg_buf);
 
-		// 3. Symulacja kasowania (czas zalezy od liczby produktow)
+		// 3. Weryfikacja wieku przy zakupie alkoholu
+		if (kom_odb.czy_alkohol == 1) {
+			sprintf(msg_buf, "Kasa Samoobsl. %d: ALKOHOL! Wzywam obsluge do zatwierdzenia.", nr_kasy);
+			loguj(msg_buf);
+
+			// Ustawienie statusu -2 (Oczekiwanie na alkohol)
+			operacje[0].sem_num = SEM_STAN;
+			operacje[0].sem_op = -1;
+			semop(semid, operacje, 1);
+
+			stan_sklepu->kasy_samoobslugowe_status[nr_kasy] = -2; // -2 = blokada alkoholowa
+
+			operacje[0].sem_op = 1;
+			semop(semid, operacje, 1);
+
+			// Czekanie na pracownika obslugi
+			while (1) {
+				sleep(1);
+
+				int status;
+				operacje[0].sem_num = SEM_STAN;
+				operacje[0].sem_op = -1;
+				semop(semid, operacje, 1);
+
+				status = stan_sklepu->kasy_samoobslugowe_status[nr_kasy];
+
+				operacje[0].sem_op = 1;
+				semop(semid, operacje, 1);
+
+				// Jesli status zmienil sie na inny niz -2, to znaczy ze obsluga zatwierdzila
+				if (status != -2) {
+					sprintf(msg_buf, "Kasa Samoobsl. %d: Wiek zatwierdzony. Kontynuuje.", nr_kasy);
+					loguj(msg_buf);
+					break;
+				}
+			}
+		}
+		// 4. Symulacja kasowania (czas zalezy od liczby produktow)
 		// Np. 0.1 sekundy na produkt
 		usleep(kom_odb.liczba_produktow * 100000);
 
-		// SYMULACJA AWARII
+		// 5. Symulacja awarii
 		// 10% szans na awarie
 		if (rand() % 100 < 10) {
 			sprintf(msg_buf, "Kasa Samoobsl. %d: AWARIA! Blokada kasy.", nr_kasy);
@@ -133,7 +170,7 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 				}
 			}
 		}
-		// 4. Wyslanie potwierdzenia do klienta
+		// 6. Wyslanie potwierdzenia do klienta
 		kom_nad.mtype = kom_odb.id_klienta; // Wysylam na kanal konkretnego procesu
 		kom_nad.id_klienta = nr_kasy;      // W polu ID wpisuje nr kasy ktora zostala uzyta
 
@@ -141,7 +178,7 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 			perror("msgsnd kasa reply");
 		}
 
-		// 5. Zwolnienie kasy
+		// 7. Zwolnienie kasy
 		operacje[0].sem_num = SEM_STAN;
 		operacje[0].sem_op = -1;
 		semop(semid, operacje, 1);
@@ -168,7 +205,7 @@ void proces_obsluga() {
 		// Pracownik co chwile sprawdza wszystkie kasy
 		for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
 
-			// 1. Sprawdzenie czy jest awaria?
+			// 1. Sprawdzenie czy jest awaria
 			int status;
 			operacje[0].sem_num = SEM_STAN;
 			operacje[0].sem_op = -1; // P
@@ -185,7 +222,7 @@ void proces_obsluga() {
 				sprintf(msg_buf, "Obsluga: Wykryto awarie w kasie %d. Naprawiam...", i);
 				loguj(msg_buf);
 
-				// Symulacja naprawy (np. 1 sekunda)
+				// Symulacja naprawy (2s.)
 				sleep(2);
 
 				// Zmiana statusu na 0 (WOLNA)
@@ -199,6 +236,24 @@ void proces_obsluga() {
 				semop(semid, operacje, 1);
 
 				sprintf(msg_buf, "Obsluga: Kasa %d naprawiona.", i);
+				loguj(msg_buf);
+			}
+
+			// 3. Reakcja na alkohol (-2)
+			else if (status == -2) {
+				sprintf(msg_buf, "Obsluga: Kasa %d wola do alkoholu. Ide zatwierdzic...", i);
+				loguj(msg_buf);
+
+				sleep(1); // Symulacja zatwierdzania (1s.)
+
+				operacje[0].sem_num = SEM_STAN;
+				operacje[0].sem_op = -1;
+				semop(semid, operacje, 1);
+				stan_sklepu->kasy_samoobslugowe_status[i] = 1; // kasa zajeta
+				operacje[0].sem_op = 1;
+				semop(semid, operacje, 1);
+
+				sprintf(msg_buf, "Obsluga: Alkohol w kasie %d zatwierdzony.", i);
 				loguj(msg_buf);
 			}
 		}
@@ -217,14 +272,15 @@ void proces_klient() {
 	// 1. Wejscie do sklepu (Aktualizacja licznika w Pamieci Dzielonej)
 	struct sembuf operacje[1];
 	operacje[0].sem_num = SEM_STAN;
-	operacje[0].sem_op = -1; // P (zablokuj dostep do stanu)
+	operacje[0].sem_op = -1; // P 
 	operacje[0].sem_flg = 0;
 	CHECK(semop(semid, operacje, 1), "semop P stan");
 
 	stan_sklepu->liczba_klientow_w_sklepie++;
-	int nr_klienta = stan_sklepu->liczba_klientow_w_sklepie;
+	stan_sklepu->id_generator++;
+	int nr_klienta = stan_sklepu->id_generator;
 
-	operacje[0].sem_op = 1; // V (odblokuj)
+	operacje[0].sem_op = 1; // V 
 	CHECK(semop(semid, operacje, 1), "semop V stan");
 
 	char msg_buf[100];
@@ -318,7 +374,7 @@ void generator_klientow() {
 		if (current_count < MAX_KLIENTOW_W_SKLEPIE) {
 			pid_t pid = fork();
 			if (pid == 0) {
-				proces_klient(); // Proces potomny staje sie Klientem
+				proces_klient(); // Proces potomny staje sie klientem
 			} else if (pid == -1) {
 				perror("fork klient");
 			}
@@ -349,6 +405,7 @@ int main() {
 
 	// Inicjalizacja pamieci
 	stan_sklepu->liczba_klientow_w_sklepie = 0;
+	stan_sklepu->id_generator = 0;
 	stan_sklepu->kolejka_samoobslugowa_len = 0;
 	stan_sklepu->koniec_symulacji = 0;
 	// Domyslnie kasy stacjonarne zamkniete
