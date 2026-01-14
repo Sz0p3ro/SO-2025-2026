@@ -205,7 +205,7 @@ void proces_obsluga() {
 		// Pracownik co chwile sprawdza wszystkie kasy
 		for (int i = 0; i < LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
 
-			// 1. Sprawdzenie czy jest awaria
+			// 1. Sprawdzenie czy jest awaria?
 			int status;
 			operacje[0].sem_num = SEM_STAN;
 			operacje[0].sem_op = -1; // P
@@ -263,6 +263,114 @@ void proces_obsluga() {
 	}
 }
 
+
+// --- LOGIKA KASY STACJONARNEJ
+void proces_kasa_stacjonarna(int nr_kasy) {
+	// nr_kasy: 0 lub 1
+	// mtype: 2 (dla kasy 0) lub 3 (dla kasy 1)
+	long my_mtype = 2 + nr_kasy;
+
+	printf("Kasa Stacjonarna %d startuje (PID: %d, mtype: %ld)\n", nr_kasy, getpid(), my_mtype);
+
+	char msg_buf[200];
+	Komunikat kom_odb;
+	Komunikat kom_nad;
+	struct sembuf operacje[1];
+	int czas_bezczynnosci = 0; // Licznik czasu bezczynnosci
+
+	while (1) {
+		// 1. Sprawdzenie czy kasa jest OTWARTA
+		int status;
+
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+
+		status = stan_sklepu->kasy_stacjonarne_status[nr_kasy];
+
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+
+		if (status == 0) {
+			// Kasa zamknieta - kasjer czeka na decyzje kierownika
+			czas_bezczynnosci = 0; // Reset licznika jak jest zamknieta
+			usleep(500000); // 0.5s
+			continue;
+		}
+
+		// 2. Proba pobrania klienta
+		// Uzywamy IPC_NOWAIT, zeby sprawdzic czy ktos jest, a jak nie ma, to liczyc czas
+		if (msgrcv(msgid, &kom_odb, sizeof(Komunikat) - sizeof(long), my_mtype, IPC_NOWAIT) == -1) {
+			if (errno == ENOMSG) {
+				// Brak klientow w kolejce
+				sleep(1); // Czekamy 1 sekunde
+				czas_bezczynnosci++;
+
+				// Jesli czekamy juz 30 sekund, zamykamy kase
+				if (czas_bezczynnosci >= 30) {
+					sprintf(msg_buf, "Kasa Stacjonarna %d: Brak klientow od 30s. Zamykam kase.", nr_kasy);
+					loguj(msg_buf);
+
+					// Zamykanie kasy
+					operacje[0].sem_num = SEM_STAN;
+					operacje[0].sem_op = -1;
+					semop(semid, operacje, 1);
+
+					stan_sklepu->kasy_stacjonarne_status[nr_kasy] = 0;
+
+					operacje[0].sem_op = 1;
+					semop(semid, operacje, 1);
+				}
+				continue;
+			} else {
+				perror("msgrcv stacjonarna");
+				exit(1);
+			}
+		}
+
+		// 3. Obsluga klienta (jesli msgrcv cos zwrocil)
+		czas_bezczynnosci = 0; // Reset licznika bo kasjer pracuje
+
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+
+		stan_sklepu->kasy_stacjonarne_status[nr_kasy] = kom_odb.id_klienta; // PID klienta
+		if (stan_sklepu->kolejka_stacjonarna_len[nr_kasy] > 0)
+			stan_sklepu->kolejka_stacjonarna_len[nr_kasy]--;
+
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+
+		sprintf(msg_buf, "Kasa Stacjonarna %d: Obsluguje klienta %d (Prod: %d)",
+				nr_kasy, kom_odb.id_klienta, kom_odb.liczba_produktow);
+		loguj(msg_buf);
+
+		// Symulacja kasowania (0.2s na produkt)
+		usleep(kom_odb.liczba_produktow * 200000);
+
+		// Potwierdzenie
+		kom_nad.mtype = kom_odb.id_klienta;
+		kom_nad.id_klienta = 100 + nr_kasy; // ID Kasy (100, 101), aby latwiej bylo odroznic w logach
+
+		if (msgsnd(msgid, &kom_nad, sizeof(Komunikat) - sizeof(long), 0) == -1) {
+			perror("msgsnd stacjonarna reply");
+		}
+
+		// Zwolnienie kasy (Status 1 = OTWARTA, gotowa)
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+
+		// Sprawdzamy czy w miedzyczasie kierownik nie zamknal kasy
+		if (stan_sklepu->kasy_stacjonarne_status[nr_kasy] != 0)
+			stan_sklepu->kasy_stacjonarne_status[nr_kasy] = 1;
+
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+	}
+}
+
 // --- LOGIKA KLIENTA ---
 
 void proces_klient() {
@@ -272,7 +380,7 @@ void proces_klient() {
 	// 1. Wejscie do sklepu (Aktualizacja licznika w Pamieci Dzielonej)
 	struct sembuf operacje[1];
 	operacje[0].sem_num = SEM_STAN;
-	operacje[0].sem_op = -1; // P 
+	operacje[0].sem_op = -1; // P (zablokuj dostep do stanu)
 	operacje[0].sem_flg = 0;
 	CHECK(semop(semid, operacje, 1), "semop P stan");
 
@@ -280,7 +388,7 @@ void proces_klient() {
 	stan_sklepu->id_generator++;
 	int nr_klienta = stan_sklepu->id_generator;
 
-	operacje[0].sem_op = 1; // V 
+	operacje[0].sem_op = 1; // V (odblokuj)
 	CHECK(semop(semid, operacje, 1), "semop V stan");
 
 	char msg_buf[100];
@@ -374,7 +482,7 @@ void generator_klientow() {
 		if (current_count < MAX_KLIENTOW_W_SKLEPIE) {
 			pid_t pid = fork();
 			if (pid == 0) {
-				proces_klient(); // Proces potomny staje sie klientem
+				proces_klient(); // Proces potomny staje sie Klientem
 			} else if (pid == -1) {
 				perror("fork klient");
 			}
@@ -447,6 +555,17 @@ int main() {
 		proces_obsluga();
 		exit(0);
 	}
+
+	// 8. Uruchomienie kas stacjonarnych (2 procesy)
+	for (int i = 0; i < LICZBA_KAS_STACJONARNYCH; i++) {
+		if (fork() == 0) {
+			proces_kasa_stacjonarna(i);
+			exit(0);
+		}
+	}
+
+	// [TYMCZASOWO] Otwieramy Kase 0 aby przetestowac
+	stan_sklepu->kasy_stacjonarne_status[0] = 1;
 
 	// 8. Uruchomienie Generatora Klientow
 	pid_t pid_gen = fork();
