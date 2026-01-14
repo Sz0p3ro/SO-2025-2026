@@ -8,10 +8,15 @@ pid_t main_pid;
 StanSklepu *stan_sklepu = NULL;
 
 volatile sig_atomic_t flaga_otworz_kase_2 = 0;
+volatile sig_atomic_t flaga_zamknij_kase = 0;
 
 // handler: tylko przestawia flage
 void obsluga_sygnalu_1(int sig) {
 	flaga_otworz_kase_2 = 1;
+}
+
+void obsluga_sygnalu_2(int sig) {
+	flaga_zamknij_kase = 1;
 }
 
 // Funkcja logowania (zapis do pliku z semaforem)
@@ -383,12 +388,12 @@ void proces_kierownik() {
 	printf("Kierownik sklepu zaczyna prace (PID: %d)\n", getpid());
 
 	signal(SIGUSR1, obsluga_sygnalu_1); // kierownik ma nasluchiwac sygnalu 1
-
+	signal(SIGUSR2, obsluga_sygnalu_2); // sygnalu 2 tez
 	struct sembuf operacje[1];
 	char msg_buf[200];
 
 	while (1) {
-		// 1. Sprawdzenie flagi SYGNALU 1 (Reczne otwarcie Kasy 2)
+		// 1. Sprawdzenie flagi SYGNALU 1 (Reczne otwarcie kasy 2)
 		if (flaga_otworz_kase_2 == 1) {
 			flaga_otworz_kase_2 = 0; // Reset flagi, zeby wykonac to tylko raz
 
@@ -405,8 +410,37 @@ void proces_kierownik() {
 			operacje[0].sem_op = 1;
 			semop(semid, operacje, 1);
 		}
+		// 2. Sprawdzenie flagi SYGNALU 2 (zamkniecie jednej z kas)
+		if (flaga_zamknij_kase == 1) {
+			flaga_zamknij_kase = 0;
 
-		// 2. Pobranie danych o kolejkach i statusach (Sekcja Krytyczna)
+			// sprawdzenie statusow
+			operacje[0].sem_num = SEM_STAN;
+			operacje[0].sem_op = -1;
+			semop(semid, operacje, 1);
+
+			int s1_status = stan_sklepu->kasy_stacjonarne_status[0];
+			int s2_status = stan_sklepu->kasy_stacjonarne_status[1];
+
+			// Logika priorytetow
+			if (s2_status != 0) {
+				// jesli S2 jest otwarta to zamykamy S2
+				stan_sklepu->kasy_stacjonarne_status[1] = 0;
+				loguj("Kierownik: Otrzymalem SYGNAL 2. Zamykam Kase S2.");
+			}
+			else if (s1_status != 0) {
+				// jesli S2 zamknieta, a S1 otwarta to zamykamy S1
+				stan_sklepu->kasy_stacjonarne_status[0] = 0;
+				loguj("Kierownik: Otrzymalem SYGNAL 2. Zamykam Kase S1.");
+			}
+			else {
+				loguj("Kierownik: Otrzymalem SYGNAL 2, ale wszystkie kasy stacjonarne sa juz zamkniete.");
+			}
+
+			operacje[0].sem_op = 1;
+			semop(semid, operacje, 1);
+		}
+		// 3. Pobranie danych o kolejkach i statusach (Sekcja Krytyczna)
 		int len_kolejki_0;
 		int status_kasy_0;
 
@@ -582,6 +616,7 @@ int main() {
 	signal(SIGINT, handle_sigint);
 
 	signal(SIGUSR1, SIG_IGN); // ignorowanie sygnalu 1 aby nie zabil kas lub klientow
+	signal(SIGUSR2, SIG_IGN); // ignorowanie sygnalu 2
 
 	// 2. Tworzenie klucza
 	key_t key = ftok(FTOK_PATH, ID_PROJEKTU);
@@ -631,6 +666,7 @@ int main() {
 			proces_kasa_samoobslugowa(i);
 			exit(0); // Dla pewnosci
 		}
+		usleep(10000);
 	}
 
 	// 7. Uruchomienie pracownika obslugi
@@ -645,6 +681,7 @@ int main() {
 			proces_kasa_stacjonarna(i);
 			exit(0);
 		}
+		usleep(10000);
 	}
 
 	// 9. Uruchomienie kierownika
@@ -659,6 +696,7 @@ int main() {
 		generator_klientow();
 	}
 
+	sleep(1);
 	printf("Symulacja dziala. Nacisnij Ctrl+C aby zakonczyc...\n");
 
 	// Oczekiwanie na zakonczenie procesow potomnych (zeby nie zrobic zombie)
