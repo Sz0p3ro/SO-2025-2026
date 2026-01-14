@@ -7,6 +7,13 @@ int msgid = -1;
 pid_t main_pid;
 StanSklepu *stan_sklepu = NULL;
 
+volatile sig_atomic_t flaga_otworz_kase_2 = 0;
+
+// handler: tylko przestawia flage
+void obsluga_sygnalu_1(int sig) {
+	flaga_otworz_kase_2 = 1;
+}
+
 // Funkcja logowania (zapis do pliku z semaforem)
 void loguj(const char *msg) {
 	struct sembuf operacje[1];
@@ -55,7 +62,7 @@ void handle_sigint(int sig) {
 
 void proces_kasa_samoobslugowa(int nr_kasy) {
 	// nr_kasy to indeks od 0 do 5
-	printf("Kasa samoobslugowa %d startuje (PID: %d)\n", nr_kasy, getpid());
+	printf("Kasa samoobslugowa %d startuje (PID: %d)\n", nr_kasy + 1, getpid());
 
 	char msg_buf[200];
 	Komunikat kom_odb;
@@ -88,12 +95,12 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 		semop(semid, operacje, 1);
 
 		sprintf(msg_buf, "Kasa Samoobsl. %d: Obsluguje klienta %d (Prod: %d, Alk: %d)",
-				nr_kasy, kom_odb.id_klienta, kom_odb.liczba_produktow, kom_odb.czy_alkohol);
+				nr_kasy + 1, kom_odb.id_klienta, kom_odb.liczba_produktow, kom_odb.czy_alkohol);
 		loguj(msg_buf);
 
 		// 3. Weryfikacja wieku przy zakupie alkoholu
 		if (kom_odb.czy_alkohol == 1) {
-			sprintf(msg_buf, "Kasa Samoobsl. %d: ALKOHOL! Wzywam obsluge do zatwierdzenia.", nr_kasy);
+			sprintf(msg_buf, "Kasa Samoobsl. %d: ALKOHOL! Wzywam obsluge do zatwierdzenia.", nr_kasy + 1);
 			loguj(msg_buf);
 
 			// Ustawienie statusu -2 (Oczekiwanie na alkohol)
@@ -122,7 +129,7 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 
 				// Jesli status zmienil sie na inny niz -2, to znaczy ze obsluga zatwierdzila
 				if (status != -2) {
-					sprintf(msg_buf, "Kasa Samoobsl. %d: Wiek zatwierdzony. Kontynuuje.", nr_kasy);
+					sprintf(msg_buf, "Kasa Samoobsl. %d: Wiek zatwierdzony. Kontynuuje.", nr_kasy + 1);
 					loguj(msg_buf);
 					break;
 				}
@@ -135,7 +142,7 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 		// 5. Symulacja awarii
 		// 10% szans na awarie
 		if (rand() % 100 < 10) {
-			sprintf(msg_buf, "Kasa Samoobsl. %d: AWARIA! Blokada kasy.", nr_kasy);
+			sprintf(msg_buf, "Kasa Samoobsl. %d: AWARIA! Blokada kasy.", nr_kasy + 1);
 			loguj(msg_buf);
 
 			// Ustawienie flagi awarii (-1)
@@ -164,7 +171,7 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 
 				// Jesli ktos z obslugi zmienil status na inny niz -1, to naprawione
 				if (status != -1) {
-					sprintf(msg_buf, "Kasa Samoobsl. %d: Naprawiona! Wznawiam prace.", nr_kasy);
+					sprintf(msg_buf, "Kasa Samoobsl. %d: Naprawiona! Wznawiam prace.", nr_kasy + 1);
 					loguj(msg_buf);
 					break;
 				}
@@ -219,7 +226,7 @@ void proces_obsluga() {
 
 			// 2. Reakcja na awarie (-1)
 			if (status == -1) {
-				sprintf(msg_buf, "Obsluga: Wykryto awarie w kasie %d. Naprawiam...", i);
+				sprintf(msg_buf, "Obsluga: Wykryto awarie w kasie %d. Naprawiam...", i + 1);
 				loguj(msg_buf);
 
 				// Symulacja naprawy (2s.)
@@ -235,13 +242,13 @@ void proces_obsluga() {
 				operacje[0].sem_op = 1;
 				semop(semid, operacje, 1);
 
-				sprintf(msg_buf, "Obsluga: Kasa %d naprawiona.", i);
+				sprintf(msg_buf, "Obsluga: Kasa %d naprawiona.", i + 1);
 				loguj(msg_buf);
 			}
 
 			// 3. Reakcja na alkohol (-2)
 			else if (status == -2) {
-				sprintf(msg_buf, "Obsluga: Kasa %d wola do alkoholu. Ide zatwierdzic...", i);
+				sprintf(msg_buf, "Obsluga: Kasa %d wola do alkoholu. Ide zatwierdzic...", i + 1);
 				loguj(msg_buf);
 
 				sleep(1); // Symulacja zatwierdzania (1s.)
@@ -253,7 +260,7 @@ void proces_obsluga() {
 				operacje[0].sem_op = 1;
 				semop(semid, operacje, 1);
 
-				sprintf(msg_buf, "Obsluga: Alkohol w kasie %d zatwierdzony.", i);
+				sprintf(msg_buf, "Obsluga: Alkohol w kasie %d zatwierdzony.", i + 1);
 				loguj(msg_buf);
 			}
 		}
@@ -270,7 +277,7 @@ void proces_kasa_stacjonarna(int nr_kasy) {
 	// mtype: 2 (dla kasy 0) lub 3 (dla kasy 1)
 	long my_mtype = 2 + nr_kasy;
 
-	printf("Kasa Stacjonarna %d startuje (PID: %d, mtype: %ld)\n", nr_kasy, getpid(), my_mtype);
+	printf("Kasa Stacjonarna S%d startuje (PID: %d, mtype: %ld)\n", nr_kasy + 1, getpid(), my_mtype);
 
 	char msg_buf[200];
 	Komunikat kom_odb;
@@ -308,7 +315,7 @@ void proces_kasa_stacjonarna(int nr_kasy) {
 
 				// Jesli czekamy juz 30 sekund, zamykamy kase
 				if (czas_bezczynnosci >= 30) {
-					sprintf(msg_buf, "Kasa Stacjonarna %d: Brak klientow od 30s. Zamykam kase.", nr_kasy);
+					sprintf(msg_buf, "Kasa Stacjonarna S%d: Brak klientow od 30s. Zamykam kase.", nr_kasy + 1);
 					loguj(msg_buf);
 
 					// Zamykanie kasy
@@ -342,8 +349,8 @@ void proces_kasa_stacjonarna(int nr_kasy) {
 		operacje[0].sem_op = 1;
 		semop(semid, operacje, 1);
 
-		sprintf(msg_buf, "Kasa Stacjonarna %d: Obsluguje klienta %d (Prod: %d)",
-				nr_kasy, kom_odb.id_klienta, kom_odb.liczba_produktow);
+		sprintf(msg_buf, "Kasa Stacjonarna S%d: Obsluguje klienta %d (Prod: %d)",
+				nr_kasy + 1, kom_odb.id_klienta, kom_odb.liczba_produktow);
 		loguj(msg_buf);
 
 		// Symulacja kasowania (0.2s na produkt)
@@ -375,11 +382,31 @@ void proces_kasa_stacjonarna(int nr_kasy) {
 void proces_kierownik() {
 	printf("Kierownik sklepu zaczyna prace (PID: %d)\n", getpid());
 
+	signal(SIGUSR1, obsluga_sygnalu_1); // kierownik ma nasluchiwac sygnalu 1
+
 	struct sembuf operacje[1];
 	char msg_buf[200];
 
 	while (1) {
-		// 1. Pobranie danych o kolejkach i statusach (Sekcja Krytyczna)
+		// 1. Sprawdzenie flagi SYGNALU 1 (Reczne otwarcie Kasy 2)
+		if (flaga_otworz_kase_2 == 1) {
+			flaga_otworz_kase_2 = 0; // Reset flagi, zeby wykonac to tylko raz
+
+			loguj("Kierownik: Otwieram Kase S2 !");
+
+			// Zmiana statusu w pamieci dzielonej
+			operacje[0].sem_num = SEM_STAN;
+			operacje[0].sem_op = -1;
+			semop(semid, operacje, 1);
+
+			// Indeks 1 to "Kasa 2" z tresci zadania
+			stan_sklepu->kasy_stacjonarne_status[1] = 1;
+
+			operacje[0].sem_op = 1;
+			semop(semid, operacje, 1);
+		}
+
+		// 2. Pobranie danych o kolejkach i statusach (Sekcja Krytyczna)
 		int len_kolejki_0;
 		int status_kasy_0;
 
@@ -393,9 +420,9 @@ void proces_kierownik() {
 		operacje[0].sem_op = 1;
 		semop(semid, operacje, 1);
 
-		// 2. Otwieranie Kasy 1 (indeks 0), jesli kolejka > 3
+		// 3. Otwieranie Kasy 1 (indeks 0), jesli kolejka > 3
 		if (status_kasy_0 == 0 && len_kolejki_0 > 3) {
-			sprintf(msg_buf, "Kierownik: Kolejka do Kasy 1 ma %d osob. OTWIERAM Kase 1.", len_kolejki_0);
+			sprintf(msg_buf, "Kierownik: Kolejka do kasy S1 ma %d osob. OTWIERAM kase S1.", len_kolejki_0);
 			loguj(msg_buf);
 
 			// Otwarcie kasy
@@ -409,7 +436,7 @@ void proces_kierownik() {
 			semop(semid, operacje, 1);
 		}
 
-		// Tu dodac obsluge sygnalow (kasa 2, ewakuacja)
+		// Tu dodac obsluge sygnalu  ewakuacja
 
 		sleep(1); // kierownik sprawdza stan kolejki co sekunde
 	}
@@ -485,7 +512,17 @@ void proces_klient() {
 		exit(1);
 	}
 
-	sprintf(msg_buf, "Klient %d obsluzony przez kase nr %d. Wychodze.", nr_klienta, (int)odpowiedz.id_klienta);
+	int id_kasy = (int)odpowiedz.id_klienta;
+
+	if (id_kasy == 100) {
+		sprintf(msg_buf, "Klient %d obsluzony przez Kase S1. Wychodze.", nr_klienta);
+	} else if (id_kasy == 101) {
+		sprintf(msg_buf, "Klient %d obsluzony przez Kase S2. Wychodze.", nr_klienta);
+	} else {
+		// Kasy samoobslugowe (maja ID 0-5)
+		sprintf(msg_buf, "Klient %d obsluzony przez Kase Samoobsl. %d. Wychodze.", nr_klienta, id_kasy + 1);
+	}
+
 	loguj(msg_buf);
 
 	// 6. Wyjscie ze sklepu
@@ -543,6 +580,8 @@ int main() {
 	// 1. Rejestracja sprzatania
 	atexit(sprzataj);
 	signal(SIGINT, handle_sigint);
+
+	signal(SIGUSR1, SIG_IGN); // ignorowanie sygnalu 1 aby nie zabil kas lub klientow
 
 	// 2. Tworzenie klucza
 	key_t key = ftok(FTOK_PATH, ID_PROJEKTU);
