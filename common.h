@@ -25,7 +25,7 @@
 #define LICZBA_KAS_STACJONARNYCH 2
 #define LICZBA_KAS_SAMOOBSLUGOWYCH 6
 #define MAX_KLIENTOW_W_SKLEPIE 50 // wczytane N (domyslne 50)
-#define LIMIT_KLIENTOW_NA_KASE 5   // wczytane K (domyslne 5)
+#define LIMIT_KLIENTOW_NA_KASE 5 // wczytane K (domyslne 5)
 
 // --- STRUKTURY DANYCH ---
 
@@ -48,16 +48,17 @@ typedef struct {
 
 	// Flaga dla Kierownika, aby wiedzial kiedy zakonczyc symulacje
 	int koniec_symulacji;
+	int ewakuacja;
 } StanSklepu;
 
 // Komunikat w kolejce komunikatow
 // Klienci wysylaja 'chce podejsc do kasy'
 // Kasy odbieraja 'obsluguje cie'
 typedef struct {
-	long mtype;       // 1 = do samoobslugowej, 2 = do stacjonarnej 1, 3 = do stacjonarnej 2
+	long mtype; // 1 = do samoobslugowej, 2 = do stacjonarnej 1, 3 = do stacjonarnej 2
 	pid_t id_klienta; // PID procesu klienta
 	int liczba_produktow;
-	int czy_alkohol;  // 1 = tak, 0 = nie
+	int czy_alkohol; // 1 = tak, 0 = nie
 } Komunikat;
 
 // --- SEMAFORY ---

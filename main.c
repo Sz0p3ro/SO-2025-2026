@@ -9,6 +9,7 @@ StanSklepu *stan_sklepu = NULL;
 
 volatile sig_atomic_t flaga_otworz_kase_2 = 0;
 volatile sig_atomic_t flaga_zamknij_kase = 0;
+volatile sig_atomic_t flaga_ewakuacja = 0;
 
 // handler: tylko przestawia flage
 void obsluga_sygnalu_1(int sig) {
@@ -19,6 +20,9 @@ void obsluga_sygnalu_2(int sig) {
 	flaga_zamknij_kase = 1;
 }
 
+void obsluga_sygnalu_3(int sig) {
+	flaga_ewakuacja = 1;
+}
 // Funkcja logowania (zapis do pliku z semaforem)
 void loguj(const char *msg) {
 	struct sembuf operacje[1];
@@ -82,6 +86,9 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 		// Typ 1 = kolejka do kas samoobslugowych
 		if (msgrcv(msgid, &kom_odb, sizeof(Komunikat) - sizeof(long), 1, 0) == -1) {
 			if (errno == EINTR) continue; // Przerwanie sygnalem, ponow
+			if (errno == EIDRM || errno == EINVAL) {
+				exit(0);
+			}
 			perror("msgrcv kasa");
 			exit(1);
 		}
@@ -123,14 +130,21 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 				sleep(1);
 
 				int status;
+				int czy_ewakuacja;
+
 				operacje[0].sem_num = SEM_STAN;
 				operacje[0].sem_op = -1;
 				semop(semid, operacje, 1);
 
 				status = stan_sklepu->kasy_samoobslugowe_status[nr_kasy];
+				czy_ewakuacja = stan_sklepu->ewakuacja;
 
 				operacje[0].sem_op = 1;
 				semop(semid, operacje, 1);
+
+				if (czy_ewakuacja) {
+					exit(0);
+				}
 
 				// Jesli status zmienil sie na inny niz -2, to znaczy ze obsluga zatwierdzila
 				if (status != -2) {
@@ -165,14 +179,21 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 				sleep(1); // Czekamy sekunde i sprawdzamy status
 
 				int status;
+				int czy_ewakuacja;
+
 				operacje[0].sem_num = SEM_STAN;
 				operacje[0].sem_op = -1;
 				semop(semid, operacje, 1);
 
 				status = stan_sklepu->kasy_samoobslugowe_status[nr_kasy];
+				czy_ewakuacja = stan_sklepu->ewakuacja;
 
 				operacje[0].sem_op = 1;
 				semop(semid, operacje, 1);
+
+				if (czy_ewakuacja) {
+					exit(0);
+				}
 
 				// Jesli ktos z obslugi zmienil status na inny niz -1, to naprawione
 				if (status != -1) {
@@ -184,9 +205,10 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 		}
 		// 6. Wyslanie potwierdzenia do klienta
 		kom_nad.mtype = kom_odb.id_klienta; // Wysylam na kanal konkretnego procesu
-		kom_nad.id_klienta = nr_kasy;      // W polu ID wpisuje nr kasy ktora zostala uzyta
+		kom_nad.id_klienta = nr_kasy; // W polu ID wpisuje nr kasy ktora zostala uzyta
 
 		if (msgsnd(msgid, &kom_nad, sizeof(Komunikat) - sizeof(long), 0) == -1) {
+			if (errno == EIDRM || errno == EINVAL) exit(0); // wyjscie w przypadku ewakuacji
 			perror("msgsnd kasa reply");
 		}
 
@@ -219,15 +241,20 @@ void proces_obsluga() {
 
 			// 1. Sprawdzenie czy jest awaria?
 			int status;
+			int ewakuacja;
+
 			operacje[0].sem_num = SEM_STAN;
 			operacje[0].sem_op = -1; // P
 			operacje[0].sem_flg = 0;
 			semop(semid, operacje, 1);
 
 			status = stan_sklepu->kasy_samoobslugowe_status[i];
+			ewakuacja = stan_sklepu->ewakuacja;
 
 			operacje[0].sem_op = 1; // V
 			semop(semid, operacje, 1);
+
+			if (ewakuacja) exit(0);
 
 			// 2. Reakcja na awarie (-1)
 			if (status == -1) {
@@ -236,6 +263,17 @@ void proces_obsluga() {
 
 				// Symulacja naprawy (2s.)
 				sleep(2);
+
+				operacje[0].sem_num = SEM_STAN;
+				operacje[0].sem_op = -1;
+				semop(semid, operacje, 1);
+
+				// sprawdzam czy podczas naprawy nie bylo ogloszonej ewakuacji
+				if (stan_sklepu->ewakuacja) {
+					operacje[0].sem_op = 1;
+					semop(semid, operacje, 1);
+					exit(0);
+				}
 
 				// Zmiana statusu na 0 (WOLNA)
 				operacje[0].sem_num = SEM_STAN;
@@ -261,6 +299,13 @@ void proces_obsluga() {
 				operacje[0].sem_num = SEM_STAN;
 				operacje[0].sem_op = -1;
 				semop(semid, operacje, 1);
+
+				if (stan_sklepu->ewakuacja) {
+					operacje[0].sem_op = 1;
+					semop(semid, operacje, 1);
+					exit(0); // ucieczka w razie ewakuacji
+				}
+
 				stan_sklepu->kasy_samoobslugowe_status[i] = 1; // kasa zajeta
 				operacje[0].sem_op = 1;
 				semop(semid, operacje, 1);
@@ -334,7 +379,12 @@ void proces_kasa_stacjonarna(int nr_kasy) {
 					semop(semid, operacje, 1);
 				}
 				continue;
-			} else {
+			}
+			else if (errno == EIDRM || errno == EINVAL) { // w przypadku ewakuacji
+				// wyjscie
+				exit(0);
+			}
+			else {
 				perror("msgrcv stacjonarna");
 				exit(1);
 			}
@@ -366,6 +416,7 @@ void proces_kasa_stacjonarna(int nr_kasy) {
 		kom_nad.id_klienta = 100 + nr_kasy; // ID Kasy (100, 101), aby latwiej bylo odroznic w logach
 
 		if (msgsnd(msgid, &kom_nad, sizeof(Komunikat) - sizeof(long), 0) == -1) {
+			if (errno == EIDRM || errno == EINVAL) exit(0);
 			perror("msgsnd stacjonarna reply");
 		}
 
@@ -389,28 +440,86 @@ void proces_kierownik() {
 
 	signal(SIGUSR1, obsluga_sygnalu_1); // kierownik ma nasluchiwac sygnalu 1
 	signal(SIGUSR2, obsluga_sygnalu_2); // sygnalu 2 tez
+	signal(SIGTERM, obsluga_sygnalu_3);
 	struct sembuf operacje[1];
 	char msg_buf[200];
 
 	while (1) {
-		// 1. Sprawdzenie flagi SYGNALU 1 (Reczne otwarcie kasy 2)
+		// 1. Sygnal 3 EWAKUACJA
+		if (flaga_ewakuacja == 1) {
+			flaga_ewakuacja = 0;
+			loguj("Kierownik: ALARM! Oglaszam EWAKUACJE! Usuwam kolejke komunikatow!");
+
+			// Ustawienie flagi w pamieci (dla nowych klientow i generatora)
+			operacje[0].sem_num = SEM_STAN;
+			operacje[0].sem_op = -1;
+			semop(semid, operacje, 1);
+			stan_sklepu->ewakuacja = 1;
+			operacje[0].sem_op = 1;
+			semop(semid, operacje, 1);
+
+			// Usuniecie kolejki komunikatow
+			// To spowoduje natychmiastowy blad u wszystkich zablokowanych w msgrcv/msgsnd
+			msgctl(msgid, IPC_RMID, NULL);
+
+			// Czekanie az wszyscy opuszcza sklep
+			while (1) {
+				int liczba_ludzi;
+				operacje[0].sem_num = SEM_STAN;
+				operacje[0].sem_op = -1;
+				semop(semid, operacje, 1);
+				liczba_ludzi = stan_sklepu->liczba_klientow_w_sklepie;
+				operacje[0].sem_op = 1;
+				semop(semid, operacje, 1);
+
+				if (liczba_ludzi <= 0) {
+					loguj("Kierownik: Sklep pusty. Ewakuacja zakonczona. Koniec symulacji.");
+
+					// Ustawienie flagi konca
+					operacje[0].sem_num = SEM_STAN;
+					operacje[0].sem_op = -1;
+					semop(semid, operacje, 1);
+					stan_sklepu->koniec_symulacji = 1;
+					operacje[0].sem_op = 1;
+					semop(semid, operacje, 1);
+
+					exit(0);
+				}
+				sleep(1);
+			}
+		}
+
+		// 2. Sprawdzenie flagi SYGNALU 1 (otwarcie kasy 2)
 		if (flaga_otworz_kase_2 == 1) {
 			flaga_otworz_kase_2 = 0; // Reset flagi, zeby wykonac to tylko raz
 
-			loguj("Kierownik: Otwieram Kase S2 !");
+			operacje[0].sem_num = SEM_STAN;
+			operacje[0].sem_op = -1;
+			semop(semid, operacje, 1);
+
+			if (stan_sklepu->kasy_stacjonarne_status[1] == 1) {
+				loguj("Kasa S2 juz jest otwarta");
+			} else {
+				loguj("Otwieram Kase S2!");
+				stan_sklepu->kasy_stacjonarne_status[1] = 1;
+			}
+
+			operacje[0].sem_op = 1;
+			semop(semid, operacje, 1);
 
 			// Zmiana statusu w pamieci dzielonej
 			operacje[0].sem_num = SEM_STAN;
 			operacje[0].sem_op = -1;
 			semop(semid, operacje, 1);
 
-			// Indeks 1 to "Kasa 2" z tresci zadania
+			// Indeks 1 - kasa 2
 			stan_sklepu->kasy_stacjonarne_status[1] = 1;
 
 			operacje[0].sem_op = 1;
 			semop(semid, operacje, 1);
 		}
-		// 2. Sprawdzenie flagi SYGNALU 2 (zamkniecie jednej z kas)
+
+		// 3. Sprawdzenie flagi SYGNALU 2 (zamkniecie jednej z kas)
 		if (flaga_zamknij_kase == 1) {
 			flaga_zamknij_kase = 0;
 
@@ -440,7 +549,8 @@ void proces_kierownik() {
 			operacje[0].sem_op = 1;
 			semop(semid, operacje, 1);
 		}
-		// 3. Pobranie danych o kolejkach i statusach (Sekcja Krytyczna)
+
+		// 4. Pobranie danych o kolejkach i statusach (Sekcja Krytyczna)
 		int len_kolejki_0;
 		int status_kasy_0;
 
@@ -454,7 +564,7 @@ void proces_kierownik() {
 		operacje[0].sem_op = 1;
 		semop(semid, operacje, 1);
 
-		// 3. Otwieranie Kasy 1 (indeks 0), jesli kolejka > 3
+		// 5. Otwieranie Kasy 1 (indeks 0), jesli kolejka > 3
 		if (status_kasy_0 == 0 && len_kolejki_0 > 3) {
 			sprintf(msg_buf, "Kierownik: Kolejka do kasy S1 ma %d osob. OTWIERAM kase S1.", len_kolejki_0);
 			loguj(msg_buf);
@@ -469,8 +579,6 @@ void proces_kierownik() {
 			operacje[0].sem_op = 1;
 			semop(semid, operacje, 1);
 		}
-
-		// Tu dodac obsluge sygnalu  ewakuacja
 
 		sleep(1); // kierownik sprawdza stan kolejki co sekunde
 	}
@@ -489,6 +597,13 @@ void proces_klient() {
 	operacje[0].sem_flg = 0;
 	CHECK(semop(semid, operacje, 1), "semop P stan");
 
+	// 2. Sprawdzenie ewakuacji na wejsciu
+	if (stan_sklepu->ewakuacja) {
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+		exit(0); // Sklep zamkniety (alarm) - nie wchodzic
+	}
+
 	stan_sklepu->liczba_klientow_w_sklepie++;
 	stan_sklepu->id_generator++;
 	int nr_klienta = stan_sklepu->id_generator;
@@ -500,11 +615,25 @@ void proces_klient() {
 	sprintf(msg_buf, "Klient %d (PID: %d) wchodzi. Zakupy...", nr_klienta, my_pid);
 	loguj(msg_buf);
 
-	// 2. Symulacja zakupow (Losowy czas 1-5s)
+	// 3. Symulacja zakupow (Losowy czas 1-5s)
 	int czas_zakupow = (rand() % 5) + 1;
 	sleep(czas_zakupow);
 
-	// 3. Wybor kasy i przygotowanie komunikatu
+	if (stan_sklepu->ewakuacja) {
+		sprintf(msg_buf, "Klient %d: ALARM! Porzucam zakupy i uciekam!", nr_klienta);
+		loguj(msg_buf);
+
+		// WYJSCIE
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+		stan_sklepu->liczba_klientow_w_sklepie--;
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+		exit(0);
+	}
+
+	// 4. Wybor kasy i przygotowanie komunikatu
 	Komunikat kom;
 	kom.id_klienta = my_pid;
 	kom.liczba_produktow = (rand() % (MAX_PRODUKTOW - MIN_PRODUKTOW + 1)) + MIN_PRODUKTOW;
@@ -522,7 +651,6 @@ void proces_klient() {
 		sprintf(msg_buf, "Klient %d idzie do samoobslugowej (Prod: %d, Alk: %d)", nr_klienta, kom.liczba_produktow, kom.czy_alkohol);
 	} else {
 		kom.mtype = 2; // 2 = Kasa Stacjonarna
-		// na razie byle gdzie potem zrobic logike
 		stan_sklepu->kolejka_stacjonarna_len[0]++;
 		sprintf(msg_buf, "Klient %d idzie do stacjonarnej (Prod: %d)", nr_klienta, kom.liczba_produktow);
 	}
@@ -532,18 +660,44 @@ void proces_klient() {
 
 	loguj(msg_buf);
 
-	// 4. Ustawienie sie w kolejce (Wyslanie komunikatu)
+	// 5. Ustawienie sie w kolejce (Wyslanie komunikatu)
 	if (msgsnd(msgid, &kom, sizeof(Komunikat) - sizeof(long), 0) == -1) {
-		perror("msgsnd klient");
-		exit(1);
+		if (errno == EIDRM || errno == EINVAL) {
+			sprintf(msg_buf, "Klient %d: Kolejka zamknieta (Ewakuacja)! Uciekam!", nr_klienta); // blad wywolany ewakuacja (usunieciem kolejki komunikatow)
+			loguj(msg_buf);
+		} else {
+			perror("msgsnd klient error"); // inny blad
+		}
+
+		// WYJSCIE
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+		stan_sklepu->liczba_klientow_w_sklepie--;
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+		exit(0);
 	}
 
-	// 5. Oczekiwanie na obsluge (Odbior komunikatu zwrotnego na kanal PID)
+	// 6. Oczekiwanie na obsluge (Odbior komunikatu zwrotnego na kanal PID)
 	// TU KLIENT ZABLOKUJE SIE DO CZASU AZ KASJER GO OBSLUZY
 	Komunikat odpowiedz;
 	if (msgrcv(msgid, &odpowiedz, sizeof(Komunikat) - sizeof(long), my_pid, 0) == -1) {
-		perror("msgrcv klient");
-		exit(1);
+		if (errno == EIDRM || errno == EINVAL) {
+			sprintf(msg_buf, "Klient %d: Wyrzucony z kolejki (Ewakuacja)! Uciekam!", nr_klienta);
+			loguj(msg_buf);
+		} else {
+			perror("msgrcv klient error"); // Inny blad
+		}
+
+		// WYJSCIE
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+		stan_sklepu->liczba_klientow_w_sklepie--;
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+		exit(0);
 	}
 
 	int id_kasy = (int)odpowiedz.id_klienta;
@@ -578,6 +732,7 @@ void generator_klientow() {
 	while (1) {
 		int current_count;
 		int koniec;
+		int czy_ewakuacja;
 		struct sembuf operacje[1];
 
 		// Pobranie licznika (sekcja krytyczna)
@@ -588,11 +743,12 @@ void generator_klientow() {
 
 		current_count = stan_sklepu->liczba_klientow_w_sklepie;
 		koniec = stan_sklepu->koniec_symulacji;
+		czy_ewakuacja = stan_sklepu->ewakuacja;
 
 		operacje[0].sem_op = 1; // V
 		semop(semid, operacje, 1);
 
-		if (koniec) break;
+		if (koniec || czy_ewakuacja) break;
 
 		if (current_count < MAX_KLIENTOW_W_SKLEPIE) {
 			pid_t pid = fork();
@@ -615,8 +771,9 @@ int main() {
 	atexit(sprzataj);
 	signal(SIGINT, handle_sigint);
 
-	signal(SIGUSR1, SIG_IGN); // ignorowanie sygnalu 1 aby nie zabil kas lub klientow
-	signal(SIGUSR2, SIG_IGN); // ignorowanie sygnalu 2
+	signal(SIGUSR1, SIG_IGN); // ignorowanie sygnalu 1 aby nie zabil kas lub klientow (SIGUSR2)
+	signal(SIGUSR2, SIG_IGN); // ignorowanie sygnalu 2 (SIGUSR1)
+	signal(SIGTERM, SIG_IGN); // ignorowanie sygnalu 3 (SIGTERM)
 
 	// 2. Tworzenie klucza
 	key_t key = ftok(FTOK_PATH, ID_PROJEKTU);
@@ -634,6 +791,7 @@ int main() {
 	stan_sklepu->id_generator = 0;
 	stan_sklepu->kolejka_samoobslugowa_len = 0;
 	stan_sklepu->koniec_symulacji = 0;
+	stan_sklepu->ewakuacja = 0;
 	// Domyslnie kasy stacjonarne zamkniete
 	stan_sklepu->kasy_stacjonarne_status[0] = 0;
 	stan_sklepu->kasy_stacjonarne_status[1] = 0;
