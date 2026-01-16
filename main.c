@@ -134,10 +134,27 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 	srand(t.tv_usec ^ t.tv_sec ^ getpid());
 
 	while (1) {
+		int status;
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+
+		status = stan_sklepu->kasy_samoobslugowe_status[nr_kasy];
+		operacje[0].sem_op = 1; semop(semid, operacje, 1);
+
+		if (status == -3) {
+			// Kasa zostala wylaczona, czeka na wlaczenie
+			usleep(500000); // 0.5s drzemki
+			continue;
+		}
+
 		// 1. Czekanie na klienta (msgrcv blokuje proces az cos przyjdzie)
 		// Typ 1 = kolejka do kas samoobslugowych
-		if (msgrcv(msgid, &kom_odb, sizeof(Komunikat) - sizeof(long), 1, 0) == -1) {
-			if (errno == EINTR) continue; // Przerwanie sygnalem, ponow
+		if (msgrcv(msgid, &kom_odb, sizeof(Komunikat) - sizeof(long), 1, IPC_NOWAIT) == -1) {
+			if (errno == ENOMSG) {
+				usleep(100000); // krotka przerwa
+				continue;
+			}
 			if (errno == EIDRM || errno == EINVAL) {
 				exit(0);
 			}
@@ -636,6 +653,63 @@ void proces_kierownik() {
 			semop(semid, operacje, 1);
 		}
 
+		// 6. OTWIERANIE I ZAMYKANIE KAS SAMOOBSLUGOWYCH W ZALEZNOSCI OD LICZBY KLIENTOW
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+
+		int L = stan_sklepu->liczba_klientow_w_sklepie;
+		int K = LIMIT_KLIENTOW_NA_KASE;
+
+		// N - liczba czynnych kas samoobslugowych
+		// Czynna czyli ma status inny niz -3
+		int N = 0;
+		int pierwsza_wylaczona = -1; // indeks pierwszej znalezionej kasy ze statusem -3
+		int ostatnia_wolna = -1;     // indeks kasy, ktora jest czynna, ale wolna (status 0) - potencjalnie do zamkniecia
+
+		for(int i=0; i<LICZBA_KAS_SAMOOBSLUGOWYCH; i++) {
+			if (stan_sklepu->kasy_samoobslugowe_status[i] != -3) {
+				N++;
+				// Szukamy kasy ktora mozna zamknac (wolnej)
+				if (stan_sklepu->kasy_samoobslugowe_status[i] == 0) {
+					ostatnia_wolna = i;
+				}
+			} else {
+				if (pierwsza_wylaczona == -1) pierwsza_wylaczona = i;
+			}
+		}
+
+		// OTWIERANIE (na kazde K klientow min 1 kasa)
+
+		int wymagane_przez_klientow = (L + K - 1) / K;
+		int cel_minimum = (wymagane_przez_klientow > 3) ? wymagane_przez_klientow : 3;
+
+		if (N < cel_minimum) {
+			// Mamy za malo kas wiec otwieramy kolejne
+			if (pierwsza_wylaczona != -1) {
+				stan_sklepu->kasy_samoobslugowe_status[pierwsza_wylaczona] = 0; // 0 = Wolna
+				sprintf(msg_buf, "Kierownik: Otwieram Kase Samoobsl. %d (Klientow: %d, Czynnych: %d).", pierwsza_wylaczona + 1, L, N);
+				loguj(msg_buf);
+			}
+		}
+
+		// ZAMYKANIE - jesli L < K*(N-3) to zamknij jedna
+		// N > 3 bo zawsze minimum 3 czynne kasy
+
+		else if (N > 3) {
+			int prog_zamykania = K * (N - 3);
+
+			if (L < prog_zamykania) {
+				// warunek spelniony wiec zamykamy jedna kase
+				if (ostatnia_wolna != -1) {
+					stan_sklepu->kasy_samoobslugowe_status[ostatnia_wolna] = -3; // wylaczona
+					sprintf(msg_buf, "Kierownik: Zamykam Kase Samoobsl. %d (Klientow: %d, Prog: %d).", ostatnia_wolna + 1, L, prog_zamykania);
+					loguj(msg_buf);
+				}
+			}
+		}
+
+		operacje[0].sem_op = 1; semop(semid, operacje, 1);
 		sleep(1); // kierownik sprawdza stan kolejki co sekunde
 	}
 }
