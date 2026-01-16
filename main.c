@@ -276,10 +276,6 @@ void proces_obsluga() {
 				}
 
 				// Zmiana statusu na 0 (WOLNA)
-				operacje[0].sem_num = SEM_STAN;
-				operacje[0].sem_op = -1;
-				semop(semid, operacje, 1);
-
 				stan_sklepu->kasy_samoobslugowe_status[i] = 0; // Odblokowanie kasy
 
 				operacje[0].sem_op = 1;
@@ -585,7 +581,6 @@ void proces_kierownik() {
 }
 
 // --- LOGIKA KLIENTA ---
-
 void proces_klient() {
 	pid_t my_pid = getpid();
 	srand(time(NULL) ^ my_pid); // Unikalne ziarno losowosci
@@ -641,18 +636,40 @@ void proces_klient() {
 
 	// Decyzja: 95% samoobslugowa, 5% stacjonarna
 	int los = rand() % 100;
+	int chce_samoobsluge = (los < 95);
 
 	operacje[0].sem_op = -1; // P
 	semop(semid, operacje, 1);
 
-	if (los < 95) {
-		kom.mtype = 1; // 1 = Kasa Samoobslugowa
-		stan_sklepu->kolejka_samoobslugowa_len++; // zwiekszam licznik kolejki samoobsl.
+	int len_samo = stan_sklepu->kolejka_samoobslugowa_len;
+	int s1_stat = stan_sklepu->kasy_stacjonarne_status[0];
+	int s2_stat = stan_sklepu->kasy_stacjonarne_status[1];
+	int s1_len = stan_sklepu->kolejka_stacjonarna_len[0];
+	int s2_len = stan_sklepu->kolejka_stacjonarna_len[1];
+
+	if (chce_samoobsluge && !(len_samo > LIMIT_CIERPLIWOSCI && (s1_stat || s2_stat))) {
+		// samoobslugowa
+		kom.mtype = 1;
+		stan_sklepu->kolejka_samoobslugowa_len++;
+
 		sprintf(msg_buf, "Klient %d idzie do samoobslugowej (Prod: %d, Alk: %d)", nr_klienta, kom.liczba_produktow, kom.czy_alkohol);
-	} else {
-		kom.mtype = 2; // 2 = Kasa Stacjonarna
-		stan_sklepu->kolejka_stacjonarna_len[0]++;
-		sprintf(msg_buf, "Klient %d idzie do stacjonarnej (Prod: %d)", nr_klienta, kom.liczba_produktow);
+	}
+	else {
+		// stacjonarna
+		int wybrana_kasa = 0; // Domyslnie S1
+
+		if (s1_stat == 1 && s2_stat == 1) {
+			// jest obie otwarte idzie tam gdzie jest krotsza kolejka
+			wybrana_kasa = (s1_len <= s2_len) ? 0 : 1;
+		} else if (s2_stat == 1) {
+			// jesli tylko S2 otwarta to idz do niej
+			wybrana_kasa = 1;
+		}
+
+		kom.mtype = 2 + wybrana_kasa; // 2 dla S1, 3 dla S2
+		stan_sklepu->kolejka_stacjonarna_len[wybrana_kasa]++;
+
+		sprintf(msg_buf, "Klient %d idzie do kasy S%d (Prod: %d)", nr_klienta, wybrana_kasa + 1, kom.liczba_produktow);
 	}
 
 	operacje[0].sem_op = 1; // V

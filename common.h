@@ -26,7 +26,7 @@
 #define LICZBA_KAS_SAMOOBSLUGOWYCH 6
 #define MAX_KLIENTOW_W_SKLEPIE 50 // wczytane N (domyslne 50)
 #define LIMIT_KLIENTOW_NA_KASE 5 // wczytane K (domyslne 5)
-
+#define LIMIT_CIERPLIWOSCI 5 // prog po ktorego przekroczeniu klient przejdzie do kasy stacjonarnej
 // --- STRUKTURY DANYCH ---
 
 // Pamiec wspoldzielona - Stan Sklepu
