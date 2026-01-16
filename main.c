@@ -23,6 +23,7 @@ void obsluga_sygnalu_2(int sig) {
 void obsluga_sygnalu_3(int sig) {
 	flaga_ewakuacja = 1;
 }
+
 // Funkcja logowania (zapis do pliku z semaforem)
 void loguj(const char *msg) {
 	struct sembuf operacje[1];
@@ -43,6 +44,55 @@ void loguj(const char *msg) {
 
 	operacje[0].sem_op = 1; // Zwolnij (V)
 	if (semop(semid, operacje, 1) == -1 && errno != EINTR) perror("Log sem post error");
+}
+
+float wystaw_paragon(int nr_klienta, int *koszyk, int liczba_produktow) {
+	struct sembuf operacje[1];
+
+	operacje[0].sem_num = SEM_LOG;
+	operacje[0].sem_op = -1;
+	operacje[0].sem_flg = 0;
+	semop(semid, operacje, 1);
+
+	FILE *f = fopen("paragony.txt", "a");
+	float suma = 0.0;
+
+	if (f) {
+		fprintf(f, "------------------------------------------\n");
+		fprintf(f, " PARAGON - KLIENT NR: %d\n", nr_klienta);
+		fprintf(f, "------------------------------------------\n");
+		fprintf(f, "%-15s | %-6s | %s\n", "NAZWA", "ILOSC", "CENA");
+		fprintf(f, "------------------------------------------\n");
+
+		// Zliczanie ilosci produktow
+		int ilosci[LICZBA_TYPOW_PRODUKTOW] = {0};
+		for(int i=0; i<liczba_produktow; i++) {
+			int idx = koszyk[i];
+			if(idx >= 0 && idx < LICZBA_TYPOW_PRODUKTOW) {
+				ilosci[idx]++;
+			}
+		}
+
+		// Wypisywanie
+		for(int i=0; i<LICZBA_TYPOW_PRODUKTOW; i++) {
+			if (ilosci[i] > 0) {
+				float wartosc = ilosci[i] * BAZA_PRODUKTOW[i].cena;
+				suma += wartosc;
+				fprintf(f, "%-15s | x%-5d | %.2f PLN\n",
+					BAZA_PRODUKTOW[i].nazwa, ilosci[i], wartosc);
+			}
+		}
+
+		fprintf(f, "------------------------------------------\n");
+		fprintf(f, " RAZEM:                       %.2f PLN\n", suma);
+		fprintf(f, "------------------------------------------\n\n");
+		fclose(f);
+	}
+
+	operacje[0].sem_op = 1;
+	semop(semid, operacje, 1);
+
+	return suma;
 }
 
 // Funkcja czyszczaca - wywolywana na koniec
@@ -79,7 +129,9 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 	struct sembuf operacje[1];
 
 	// Ziarno losowosci unikalne dla procesu
-	srand(time(NULL) ^ getpid());
+	struct timeval t;
+	gettimeofday(&t, NULL);
+	srand(t.tv_usec ^ t.tv_sec ^ getpid());
 
 	while (1) {
 		// 1. Czekanie na klienta (msgrcv blokuje proces az cos przyjdzie)
@@ -154,6 +206,7 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 				}
 			}
 		}
+
 		// 4. Symulacja kasowania (czas zalezy od liczby produktow)
 		// Np. 0.1 sekundy na produkt
 		usleep(kom_odb.liczba_produktow * 100000);
@@ -203,9 +256,13 @@ void proces_kasa_samoobslugowa(int nr_kasy) {
 				}
 			}
 		}
+
+		float zaplacono = wystaw_paragon(kom_odb.nr_klienta_sklepu, kom_odb.koszyk, kom_odb.liczba_produktow);
+
 		// 6. Wyslanie potwierdzenia do klienta
 		kom_nad.mtype = kom_odb.id_klienta; // Wysylam na kanal konkretnego procesu
 		kom_nad.id_klienta = nr_kasy; // W polu ID wpisuje nr kasy ktora zostala uzyta
+		kom_nad.koszt_zakupow = zaplacono; // obliczona kwota za zakupy
 
 		if (msgsnd(msgid, &kom_nad, sizeof(Komunikat) - sizeof(long), 0) == -1) {
 			if (errno == EIDRM || errno == EINVAL) exit(0); // wyjscie w przypadku ewakuacji
@@ -407,9 +464,12 @@ void proces_kasa_stacjonarna(int nr_kasy) {
 		// Symulacja kasowania (0.2s na produkt)
 		usleep(kom_odb.liczba_produktow * 200000);
 
+		float zaplacono = wystaw_paragon(kom_odb.nr_klienta_sklepu, kom_odb.koszyk, kom_odb.liczba_produktow); // generowanie paragonu
+
 		// Potwierdzenie
 		kom_nad.mtype = kom_odb.id_klienta;
-		kom_nad.id_klienta = 100 + nr_kasy; // ID Kasy (100, 101), aby latwiej bylo odroznic w logach
+		kom_nad.id_klienta = 100 + nr_kasy; // ID Kasy (100, 101)
+		kom_nad.koszt_zakupow = zaplacono;
 
 		if (msgsnd(msgid, &kom_nad, sizeof(Komunikat) - sizeof(long), 0) == -1) {
 			if (errno == EIDRM || errno == EINVAL) exit(0);
@@ -583,7 +643,11 @@ void proces_kierownik() {
 // --- LOGIKA KLIENTA ---
 void proces_klient() {
 	pid_t my_pid = getpid();
-	srand(time(NULL) ^ my_pid); // Unikalne ziarno losowosci
+
+	//  mikrosekundy aby nic sie nie zdublowalo
+	struct timeval t;
+	gettimeofday(&t, NULL);
+	srand(t.tv_usec ^ t.tv_sec ^ my_pid);
 
 	// 1. Wejscie do sklepu (Aktualizacja licznika w Pamieci Dzielonej)
 	struct sembuf operacje[1];
@@ -631,8 +695,20 @@ void proces_klient() {
 	// 4. Wybor kasy i przygotowanie komunikatu
 	Komunikat kom;
 	kom.id_klienta = my_pid;
+	kom.nr_klienta_sklepu = nr_klienta;
 	kom.liczba_produktow = (rand() % (MAX_PRODUKTOW - MIN_PRODUKTOW + 1)) + MIN_PRODUKTOW;
-	kom.czy_alkohol = (rand() % 100) < 20 ? 1 : 0; // 20% szans na alkohol
+	kom.czy_alkohol = 0;
+
+	// wypelnianie koszyka losowymi produktami z bazy
+	for (int i = 0; i < kom.liczba_produktow; i++) {
+		int idx = rand() % LICZBA_TYPOW_PRODUKTOW; // losowanie produktu z bazy
+		kom.koszyk[i] = idx;
+
+		// Sprawdzam czy produkt to alkohol
+		if (BAZA_PRODUKTOW[idx].is_alkohol == 1) {
+			kom.czy_alkohol = 1;
+		}
+	}
 
 	// Decyzja: 95% samoobslugowa, 5% stacjonarna
 	int los = rand() % 100;
@@ -832,6 +908,10 @@ int main() {
 	// Wyczysc stary plik raportu
 	FILE *f = fopen("raport.txt", "w");
 	if(f) { fprintf(f, "START SYMULACJI\n"); fclose(f); }
+
+	// Wyczysc stary plik paragonow
+	FILE *fp = fopen("paragony.txt", "w");
+	if(fp) { fclose(fp); }
 
 	printf("IPC zainicjalizowane. Start procesow...\n");
 

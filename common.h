@@ -14,6 +14,7 @@
 #include <time.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 
 // --- KONFIGURACJA ---
 #define FTOK_PATH "."
@@ -28,6 +29,27 @@
 #define LIMIT_KLIENTOW_NA_KASE 5 // wczytane K (domyslne 5)
 #define LIMIT_CIERPLIWOSCI 5 // prog po ktorego przekroczeniu klient przejdzie do kasy stacjonarnej
 // --- STRUKTURY DANYCH ---
+
+typedef struct {
+	char nazwa[20];
+	float cena;
+	int is_alkohol; // 1 - tak
+} Produkt;
+
+static const Produkt BAZA_PRODUKTOW[10] = {
+	{"Bulka", 0.60, 0},
+	{"Chleb", 4.15, 0},
+	{"Maslo", 6.50, 0},
+	{"Mleko", 3.90, 0},
+	{"Jajka", 11.00, 0},
+	{"Szynka", 14.00, 0},
+	{"Jablka", 3.20, 0},
+	{"Czekolada", 5.50, 0},
+	{"Piwo", 4.00, 1},    //
+	{"Wodka", 35.00, 1}   //
+};
+
+#define LICZBA_TYPOW_PRODUKTOW 10
 
 // Pamiec wspoldzielona - Stan Sklepu
 // Dostep choniony semaforem (SEM_STAN)!
@@ -57,8 +79,11 @@ typedef struct {
 typedef struct {
 	long mtype; // 1 = do samoobslugowej, 2 = do stacjonarnej 1, 3 = do stacjonarnej 2
 	pid_t id_klienta; // PID procesu klienta
+	int nr_klienta_sklepu; // do paragonow
 	int liczba_produktow;
 	int czy_alkohol; // 1 = tak, 0 = nie
+	float koszt_zakupow;
+	int koszyk[MAX_PRODUKTOW]; //indeksy produktow z bazy
 } Komunikat;
 
 // --- SEMAFORY ---
