@@ -408,17 +408,19 @@ void proces_kasa_stacjonarna(int nr_kasy) {
 	while (1) {
 		// 1. Sprawdzenie czy kasa jest OTWARTA
 		int status;
+		int len_kolejki;
 
 		operacje[0].sem_num = SEM_STAN;
 		operacje[0].sem_op = -1;
 		semop(semid, operacje, 1);
 
 		status = stan_sklepu->kasy_stacjonarne_status[nr_kasy];
+		len_kolejki = stan_sklepu->kolejka_stacjonarna_len[nr_kasy];
 
 		operacje[0].sem_op = 1;
 		semop(semid, operacje, 1);
 
-		if (status == 0) {
+		if (status == 0 && len_kolejki == 0) {
 			// Kasa zamknieta - kasjer czeka na decyzje kierownika
 			czas_bezczynnosci = 0; // Reset licznika jak jest zamknieta
 			usleep(500000); // 0.5s
@@ -429,6 +431,13 @@ void proces_kasa_stacjonarna(int nr_kasy) {
 		// Uzywamy IPC_NOWAIT, zeby sprawdzic czy ktos jest, a jak nie ma, to liczyc czas
 		if (msgrcv(msgid, &kom_odb, sizeof(Komunikat) - sizeof(long), my_mtype, IPC_NOWAIT) == -1) {
 			if (errno == ENOMSG) {
+
+				if (status == 0) {
+					// czekamy na kolejny obieg petli, ktory zablokuje sie wyzej
+					usleep(100000);
+					continue;
+				}
+
 				// Brak klientow w kolejce
 				sleep(1); // Czekamy 1 sekunde
 				czas_bezczynnosci++;
