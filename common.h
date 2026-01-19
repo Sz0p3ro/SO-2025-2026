@@ -25,9 +25,10 @@
 #define MIN_PRODUKTOW 3
 #define LICZBA_KAS_STACJONARNYCH 2
 #define LICZBA_KAS_SAMOOBSLUGOWYCH 6
-#define MAX_KLIENTOW_W_SKLEPIE 50 // wczytane N (domyslne 50)
-#define LIMIT_KLIENTOW_NA_KASE 5 // wczytane K (domyslne 5)
+#define DEFAULT_MAX_KLIENTOW 50 // wczytane N (domyslne 50)
+#define DEFAULT_LIMIT_NA_KASE 5 // wczytane K (domyslne 5)
 #define LIMIT_CIERPLIWOSCI 5 // prog po ktorego przekroczeniu klient przejdzie do kasy stacjonarnej
+#define LICZBA_TYPOW_PRODUKTOW 10
 // --- STRUKTURY DANYCH ---
 
 typedef struct {
@@ -71,6 +72,10 @@ typedef struct {
 	// Flaga dla Kierownika, aby wiedzial kiedy zakonczyc symulacje
 	int koniec_symulacji;
 	int ewakuacja;
+
+	int max_klientow_sklep; // N
+	int limit_klientow_kasa; // K
+	pid_t pid_kierownik;
 } StanSklepu;
 
 // Komunikat w kolejce komunikatow
