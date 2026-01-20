@@ -10,7 +10,7 @@ int main(int argc, char *argv[]) {
 	shmid = shmget(key, sizeof(StanSklepu), 0600);
 	stan_sklepu = (StanSklepu*) shmat(shmid, NULL, 0);
 	semid = semget(key, LICZBA_SEMAFOROW, 0600);
-	 msgid = msgget(key, 0600);
+	msgid = msgget(key, 0600);
 
 	// pobranie numeru kasy z argumentu
 	if (argc < 2) return 1;
@@ -64,7 +64,7 @@ int main(int argc, char *argv[]) {
                                 // Jesli czekamy juz 30 sekund, zamykamy kase
                                 if (czas_bezczynnosci >= 30) {
                                         sprintf(msg_buf, "Kasa Stacjonarna S%d: Brak klientow od 30s. Zamykam kase.", nr_kasy + 1);
-                                        loguj(semid, msg_buf);
+                                        loguj(semid, msg_buf, KOLOR_NIEBIESKI);
 
                                         // Zamykanie kasy
                                         operacje[0].sem_num = SEM_STAN;
@@ -102,9 +102,9 @@ int main(int argc, char *argv[]) {
                 operacje[0].sem_op = 1;
                 semop(semid, operacje, 1);
 
-                sprintf(msg_buf, "Kasa Stacjonarna S%d: Obsluguje klienta %d (Prod: %d)",
-                                nr_kasy + 1, kom_odb.id_klienta, kom_odb.liczba_produktow);
-                loguj(semid, msg_buf);
+                sprintf(msg_buf, "Kasa Stacjonarna S%d: Obsluguje klienta nr %d (PID: %d) (Prod: %d)",
+                                nr_kasy + 1, kom_odb.nr_klienta_sklepu, kom_odb.id_klienta, kom_odb.liczba_produktow);
+                loguj(semid, msg_buf, KOLOR_NIEBIESKI);
 
                 // Symulacja kasowania (0.2s na produkt)
                 usleep(kom_odb.liczba_produktow * 200000);

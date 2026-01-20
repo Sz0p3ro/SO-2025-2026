@@ -40,7 +40,7 @@ int main() {
                         // 2. Reakcja na awarie (-1)
                         if (status == -1) {
                                 sprintf(msg_buf, "Obsluga: Wykryto awarie w kasie %d. Naprawiam...", i + 1);
-                                loguj(semid, msg_buf);
+                                loguj(semid, msg_buf, KOLOR_CYJAN);
 
                                 // Symulacja naprawy (2s.)
                                 sleep(2);
@@ -63,13 +63,13 @@ int main() {
                                 semop(semid, operacje, 1);
 
                                 sprintf(msg_buf, "Obsluga: Kasa %d naprawiona.", i + 1);
-                                loguj(semid, msg_buf);
+                                loguj(semid, msg_buf, KOLOR_CYJAN);
                         }
 
                         // 3. Reakcja na alkohol (-2)
                         else if (status == -2) {
                                 sprintf(msg_buf, "Obsluga: Kasa %d wola do alkoholu. Ide zatwierdzic...", i + 1);
-                                loguj(semid, msg_buf);
+                                loguj(semid, msg_buf, KOLOR_CYJAN);
 
                                 sleep(1); // Symulacja zatwierdzania (1s.)
 
@@ -88,7 +88,7 @@ int main() {
                                 semop(semid, operacje, 1);
 
                                 sprintf(msg_buf, "Obsluga: Alkohol w kasie %d zatwierdzony.", i + 1);
-                                loguj(semid, msg_buf);
+                                loguj(semid, msg_buf, KOLOR_CYJAN);
                         }
                 }
 

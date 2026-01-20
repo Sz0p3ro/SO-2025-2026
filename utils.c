@@ -6,22 +6,39 @@ void handle_error(const char *msg) {
 	exit(EXIT_FAILURE);
 }
 
+// funkcja pomocnicza do kolorowania logow
+const char* get_ansi_color(LogColor c) {
+	switch(c) {
+		case KOLOR_CZERWONY: return ANSI_COLOR_RED;
+		case KOLOR_ZIELONY: return ANSI_COLOR_GREEN;
+		case KOLOR_NIEBIESKI: return ANSI_COLOR_BLUE;
+		case KOLOR_ZOLTY: return ANSI_COLOR_YELLOW;
+		case KOLOR_CYJAN: return ANSI_COLOR_CYAN;
+		default: return ANSI_COLOR_RESET;
+	}
+}
+
 // funkcja zapisujaca  logi do pliku
-void loguj(int semid, const char *msg) {
+void loguj(int semid, const char *msg, LogColor color) {
 	struct sembuf operacje[1];
 	operacje[0].sem_num = SEM_LOG;
 	operacje[0].sem_op = -1; // Czekaj (P)
 	operacje[0].sem_flg = 0;
 
 	if (semop(semid, operacje, 1) == -1 && errno != EINTR) {
-	    perror("Log sem wait error");
+		 perror("Log sem wait error");
 	}
+
+	time_t now = time(NULL);
+	char *t = ctime(&now);
+	t[strlen(t)-1] = '\0'; // usun \n
+
+	const char* ansi = get_ansi_color(color);
+	printf("%s[%s] %s%s\n", ansi, t, msg, ANSI_COLOR_RESET);
+	fflush(stdout);
 
 	FILE *f = fopen("raport.txt", "a");
 	if (f) {
-		time_t now = time(NULL);
-	    char *t = ctime(&now);
-		t[strlen(t)-1] = '\0'; // usun \n
 		fprintf(f, "[%s] %s\n", t, msg);
 		fclose(f);
 	}
@@ -43,7 +60,6 @@ float wystaw_paragon(int semid, int nr_klienta, int *koszyk, int liczba_produkto
 
         FILE *f = fopen("paragony.txt", "a");
         float suma = 0.0;
-
         if (f) {
                 fprintf(f, "------------------------------------------\n");
                 fprintf(f, " PARAGON - KLIENT NR: %d\n", nr_klienta);

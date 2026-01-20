@@ -70,14 +70,14 @@ int main(int argc, char *argv[]) {
                 operacje[0].sem_op = 1;
                 semop(semid, operacje, 1);
 
-                sprintf(msg_buf, "Kasa Samoobsl. %d: Obsluguje klienta %d (Prod: %d, Alk: %d)",
-                                nr_kasy + 1, kom_odb.id_klienta, kom_odb.liczba_produktow, kom_odb.czy_alkohol);
-                loguj(semid, msg_buf);
+                sprintf(msg_buf, "Kasa Samoobsl. %d: Obsluguje klienta nr %d (PID: %d) (Prod: %d, Alk: %d)",
+                                nr_kasy + 1, kom_odb.nr_klienta_sklepu, kom_odb.id_klienta, kom_odb.liczba_produktow, kom_odb.czy_alkohol);
+                loguj(semid, msg_buf, KOLOR_ZIELONY);
 
                 // 3. Weryfikacja wieku przy zakupie alkoholu
                 if (kom_odb.czy_alkohol == 1) {
                         sprintf(msg_buf, "Kasa Samoobsl. %d: ALKOHOL! Wzywam obsluge do zatwierdzenia.", nr_kasy + 1);
-                        loguj(semid, msg_buf);
+                        loguj(semid, msg_buf, KOLOR_CYJAN);
 
                         // Ustawienie statusu -2 (Oczekiwanie na alkohol)
                         operacje[0].sem_num = SEM_STAN;
@@ -113,7 +113,7 @@ int main(int argc, char *argv[]) {
                                 // Jesli status zmienil sie na inny niz -2, to znaczy ze obsluga zatwierdzila
                                 if (status != -2) {
                                         sprintf(msg_buf, "Kasa Samoobsl. %d: Wiek zatwierdzony. Kontynuuje.", nr_kasy + 1);
-                                        loguj(semid, msg_buf);
+                                        loguj(semid, msg_buf, KOLOR_CYJAN);
                                         break;
                                 }
                         }
@@ -127,7 +127,7 @@ int main(int argc, char *argv[]) {
                 // 10% szans na awarie
                 if (rand() % 100 < 10) {
                         sprintf(msg_buf, "Kasa Samoobsl. %d: AWARIA! Blokada kasy.", nr_kasy + 1);
-                        loguj(semid, msg_buf);
+                        loguj(semid, msg_buf, KOLOR_CYJAN);
 
                         // Ustawienie flagi awarii (-1)
                         operacje[0].sem_num = SEM_STAN;
@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
                                 // Jesli ktos z obslugi zmienil status na inny niz -1, to naprawione
                                 if (status != -1) {
                                         sprintf(msg_buf, "Kasa Samoobsl. %d: Naprawiona! Wznawiam prace.", nr_kasy + 1);
-                                        loguj(semid, msg_buf);
+                                        loguj(semid, msg_buf, KOLOR_CYJAN);
                                         break;
                                 }
                         }

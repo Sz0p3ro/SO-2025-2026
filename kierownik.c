@@ -15,7 +15,7 @@ void obsluga_sygnalu_3(int sig) { flaga_ewakuacja = 1; }
 int main() {
 	key_t key = ftok(FTOK_PATH, ID_PROJEKTU);
 	shmid = shmget(key, sizeof(StanSklepu), 0600);
-    stan_sklepu = (StanSklepu*) shmat(shmid, NULL, 0);
+	stan_sklepu = (StanSklepu*) shmat(shmid, NULL, 0);
 	semid = semget(key, LICZBA_SEMAFOROW, 0600);
 	msgid = msgget(key, 0600);
 
@@ -31,7 +31,7 @@ int main() {
                 // 1. Sygnal 3 EWAKUACJA
                 if (flaga_ewakuacja == 1) {
                         flaga_ewakuacja = 0;
-                        loguj(semid, "Kierownik: ALARM! Oglaszam EWAKUACJE! Usuwam kolejke komunikatow!");
+                        loguj(semid, "Kierownik: ALARM! Oglaszam EWAKUACJE! Usuwam kolejke komunikatow!", KOLOR_CZERWONY);
 
                         // Ustawienie flagi w pamieci (dla nowych klientow i generatora)
                         operacje[0].sem_num = SEM_STAN;
@@ -56,7 +56,7 @@ int main() {
                                 semop(semid, operacje, 1);
 
                                 if (liczba_ludzi <= 0) {
-                                        loguj(semid, "Kierownik: Sklep pusty. Ewakuacja zakonczona. Koniec symulacji.");
+                                        loguj(semid, "Kierownik: Sklep pusty. Ewakuacja zakonczona. Koniec symulacji.", KOLOR_CZERWONY);
 
                                         // Ustawienie flagi konca
                                         operacje[0].sem_num = SEM_STAN;
@@ -81,9 +81,9 @@ int main() {
                         semop(semid, operacje, 1);
 
                         if (stan_sklepu->kasy_stacjonarne_status[1] == 1) {
-                                loguj(semid, "Kasa S2 juz jest otwarta");
+                                loguj(semid, "Kasa S2 juz jest otwarta", KOLOR_CZERWONY);
                         } else {
-                                loguj(semid, "Otwieram Kase S2!");
+                                loguj(semid, "Otwieram Kase S2!", KOLOR_CZERWONY);
                                 stan_sklepu->kasy_stacjonarne_status[1] = 1;
                         }
 
@@ -118,15 +118,15 @@ int main() {
                         if (s2_status != 0) {
                                 // jesli S2 jest otwarta to zamykamy S2
                                 stan_sklepu->kasy_stacjonarne_status[1] = 0;
-                                loguj(semid, "Kierownik: Otrzymalem SYGNAL 2. Zamykam Kase S2.");
+                                loguj(semid, "Kierownik: Otrzymalem SYGNAL 2. Zamykam Kase S2.", KOLOR_CZERWONY);
                         }
                         else if (s1_status != 0) {
                                 // jesli S2 zamknieta, a S1 otwarta to zamykamy S1
                                 stan_sklepu->kasy_stacjonarne_status[0] = 0;
-                                loguj(semid, "Kierownik: Otrzymalem SYGNAL 2. Zamykam Kase S1.");
+                                loguj(semid, "Kierownik: Otrzymalem SYGNAL 2. Zamykam Kase S1.", KOLOR_CZERWONY);
                         }
                         else {
-                                loguj(semid, "Kierownik: Otrzymalem SYGNAL 2, ale wszystkie kasy stacjonarne sa juz zamkniete.");
+                                loguj(semid, "Kierownik: Otrzymalem SYGNAL 2, ale wszystkie kasy stacjonarne sa juz zamkniete.", KOLOR_CZERWONY);
                         }
 
                         operacje[0].sem_op = 1;
@@ -150,7 +150,7 @@ int main() {
                 // 5. Otwieranie Kasy 1 (indeks 0), jesli kolejka > 3
                 if (status_kasy_0 == 0 && len_kolejki_0 > 3) {
                         sprintf(msg_buf, "Kierownik: Kolejka do kasy S1 ma %d osob. OTWIERAM kase S1.", len_kolejki_0);
-                        loguj(semid, msg_buf);
+                        loguj(semid, msg_buf, KOLOR_CZERWONY);
 
                         // Otwarcie kasy
                         operacje[0].sem_num = SEM_STAN;
@@ -200,7 +200,7 @@ int main() {
                         if (pierwsza_wylaczona != -1) {
                                 stan_sklepu->kasy_samoobslugowe_status[pierwsza_wylaczona] = 0; // 0 = Wolna
                                 sprintf(msg_buf, "Kierownik: Otwieram Kase Samoobsl. %d (Klientow: %d, Czynnych: %d).", pierwsza_wylaczona + 1, L, N);
-                                loguj(semid, msg_buf);
+                                loguj(semid, msg_buf, KOLOR_CZERWONY);
                         }
                 }
 
@@ -215,7 +215,7 @@ int main() {
                                 if (ostatnia_wolna != -1) {
                                         stan_sklepu->kasy_samoobslugowe_status[ostatnia_wolna] = -3; // wylaczona
                                         sprintf(msg_buf, "Kierownik: Zamykam Kase Samoobsl. %d (Klientow: %d, Prog: %d).", ostatnia_wolna + 1, L, prog_zamykania);
-                                        loguj(semid, msg_buf);
+                                        loguj(semid, msg_buf, KOLOR_CZERWONY);
                                 }
                         }
                 }

@@ -5,7 +5,7 @@ int semid, msgid, shmid;
 StanSklepu *stan_sklepu;
 
 int main() {
-    key_t key = ftok(FTOK_PATH, ID_PROJEKTU);
+	key_t key = ftok(FTOK_PATH, ID_PROJEKTU);
 	shmid = shmget(key, sizeof(StanSklepu), 0600);
 	stan_sklepu = (StanSklepu*) shmat(shmid, NULL, 0); // podlaczenie do pamieci wspoldzielonej
 	semid = semget(key, LICZBA_SEMAFOROW, 0600); // podlaczenie do semaforow
@@ -28,7 +28,7 @@ int main() {
 	// 2. Sprawdzenie ewakuacji na wejsciu
 	if (stan_sklepu->ewakuacja) {
 		operacje[0].sem_op = 1;
-	    semop(semid, operacje, 1);
+		semop(semid, operacje, 1);
 		exit(0); // Sklep zamkniety (alarm) - nie wchodzic
 	}
 
@@ -41,7 +41,7 @@ int main() {
 
 	char msg_buf[100];
 	sprintf(msg_buf, "Klient %d (PID: %d) wchodzi. Zakupy...", nr_klienta, my_pid);
-	loguj(semid, msg_buf);
+	loguj(semid, msg_buf, KOLOR_ZOLTY);
 
 	// 3. Symulacja zakupow (Losowy czas 1-5s)
 	int czas_zakupow = (rand() % 5) + 1;
@@ -49,7 +49,7 @@ int main() {
 
 	if (stan_sklepu->ewakuacja) {
 		sprintf(msg_buf, "Klient %d: ALARM! Porzucam zakupy i uciekam!", nr_klienta);
-		loguj(semid, msg_buf);
+		loguj(semid, msg_buf, KOLOR_ZOLTY);
 
 		// WYJSCIE
                 operacje[0].sem_num = SEM_STAN;
@@ -120,13 +120,13 @@ int main() {
         operacje[0].sem_op = 1; // V
         semop(semid, operacje, 1);
 
-        loguj(semid, msg_buf);
+        loguj(semid, msg_buf, KOLOR_ZOLTY);
 
         // 5. Ustawienie sie w kolejce (Wyslanie komunikatu)
         if (msgsnd(msgid, &kom, sizeof(Komunikat) - sizeof(long), 0) == -1) {
                 if (errno == EIDRM || errno == EINVAL) {
                         sprintf(msg_buf, "Klient %d: Kolejka zamknieta (Ewakuacja)! Uciekam!", nr_klienta); // blad wywolany ewakuacja (usunieciem kolejki komunikatow)
-                        loguj(semid, msg_buf);
+                        loguj(semid, msg_buf, KOLOR_ZOLTY);
                 } else {
                         perror("msgsnd klient error"); // inny blad
                 }
@@ -147,7 +147,7 @@ int main() {
         if (msgrcv(msgid, &odpowiedz, sizeof(Komunikat) - sizeof(long), my_pid, 0) == -1) {
                 if (errno == EIDRM || errno == EINVAL) {
                         sprintf(msg_buf, "Klient %d: Wyrzucony z kolejki (Ewakuacja)! Uciekam!", nr_klienta);
-                        loguj(semid, msg_buf);
+                        loguj(semid, msg_buf, KOLOR_ZOLTY);
                 } else {
                         perror("msgrcv klient error"); // Inny blad
                 }
@@ -173,7 +173,7 @@ int main() {
                 sprintf(msg_buf, "Klient %d obsluzony przez Kase Samoobsl. %d. Wychodze.", nr_klienta, id_kasy + 1);
         }
 
-        loguj(semid, msg_buf);
+        loguj(semid, msg_buf, KOLOR_ZOLTY);
 
         // 7. Wyjscie ze sklepu
 	operacje[0].sem_op = -1; // P

@@ -62,7 +62,7 @@ int main(int argc, char *argv[]) {
 	if (argc > 2) arg_limit_kasa = atoi(argv[2]);
 
 	if (arg_max_klientow <= 0 || arg_limit_kasa <= 0) {
-		fprintf(stderr, "Blad: Argumenty musza byc dodatnie!\nUzycie: %s [max_klientow] [limit_kasa]\n", argv[0]);
+		fprintf(stderr, "Blad: Argumenty musza byc liczba calkowita dodatnia!\nUzycie: %s [max_klientow] [limit_kasa]\n", argv[0]);
 		exit(1);
 	}
 	printf("Start symulacji. Konfiguracja: N=%d, K=%d\n", arg_max_klientow, arg_limit_kasa);
