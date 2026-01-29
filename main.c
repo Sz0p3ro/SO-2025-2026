@@ -7,7 +7,7 @@ int msgid = -1;
 
 StanSklepu *stan_sklepu = NULL;
 
-pid_t child_pids[20]; // tablica PID do sprzatania
+pid_t child_pids[MAX_SYSTEM_PROCESSES]; // tablica PID do sprzatania
 int child_count = 0;
 
 void sprzataj() {
@@ -31,6 +31,32 @@ void handle_sigint(int sig) {
 	exit(0); // To wywola funkcje zarejestrowana w atexit(sprzataj)
 }
 
+void zapisz_pid(pid_t pid) {
+	for(int i=0; i<MAX_SYSTEM_PROCESSES; i++) {
+		if (child_pids[i] == 0) {
+			child_pids[i] = pid;
+			return;
+		}
+	}
+}
+
+void usun_pid(pid_t pid) {
+	for(int i=0; i<MAX_SYSTEM_PROCESSES; i++) {
+		if (child_pids[i] == pid) {
+			child_pids[i] = 0;
+			return;
+		}
+	}
+}
+
+int policz_aktywne_procesy() {
+	int c = 0;
+	for(int i=0; i<MAX_SYSTEM_PROCESSES; i++) {
+		if (child_pids[i] != 0) c++;
+	}
+	return c;
+}
+
 // funkcja pomocnicza do uruchamiania procesow przy uzyciu exec
 void uruchom_proces(const char *program, char *const args[]) {
 	pid_t pid = fork();
@@ -40,7 +66,7 @@ void uruchom_proces(const char *program, char *const args[]) {
 	perror("execv failed");
 		_exit(1);
 	} else if (pid > 0) {
-	child_pids[child_count++] = pid;
+		zapisz_pid(pid);
 	} else {
 		perror("fork failed");
 	}
@@ -54,18 +80,36 @@ int main(int argc, char *argv[]) {
 	signal(SIGUSR1, SIG_IGN);
 	signal(SIGUSR2, SIG_IGN);
 
+	memset(child_pids, 0, sizeof(child_pids));
+
 	// wczytanie i walidacja argumentow
 	int arg_max_klientow = DEFAULT_MAX_KLIENTOW;
 	int arg_limit_kasa = DEFAULT_LIMIT_NA_KASE;
+	int arg_total_klientow = -1;
 
 	if (argc > 1) arg_max_klientow = atoi(argv[1]);
 	if (argc > 2) arg_limit_kasa = atoi(argv[2]);
+	if (argc > 3) arg_total_klientow = atoi(argv[3]);
+
+	int realna_pojemnosc = arg_max_klientow;
+	if (realna_pojemnosc > HARD_LIMIT_POJEMNOSC) {
+		printf("Ograniczono fizyczna pojemnosc sklepu (Semafor) do bezpiecznego limitu: %d\n", HARD_LIMIT_POJEMNOSC);
+		realna_pojemnosc = HARD_LIMIT_POJEMNOSC;
+	}
 
 	if (arg_max_klientow <= 0 || arg_limit_kasa <= 0) {
-		fprintf(stderr, "Blad: Argumenty musza byc liczba calkowita dodatnia!\nUzycie: %s [max_klientow] [limit_kasa]\n", argv[0]);
+		fprintf(stderr, "Blad: Argumenty musza byc liczba calkowita dodatnia!\nUzycie: %s [max_klientow] [limit_kasa] opcjonalnie[liczba klientow na start]\n", argv[0]);
 		exit(1);
 	}
+
 	printf("Start symulacji. Konfiguracja: N=%d, K=%d\n", arg_max_klientow, arg_limit_kasa);
+
+	if (arg_total_klientow > 0) {
+		printf("Tryb WIELKIE OTWARCIE: Symulacja dla %d klientow.\n", arg_total_klientow);
+	}
+	else {
+		printf("Tryb CIAGLY (Nieskonczony).\n");
+	}
 
 	// inizjalizacja struktur
 	key_t key = ftok(FTOK_PATH, ID_PROJEKTU);
@@ -83,7 +127,9 @@ int main(int argc, char *argv[]) {
 
 	semid = semget(key, LICZBA_SEMAFOROW, IPC_CREAT | 0600);
 	if (semid == -1) handle_error("semget");
-	for(int i=0; i<LICZBA_SEMAFOROW; i++) semctl(semid, i, SETVAL, 1);
+	semctl(semid, SEM_STAN, SETVAL, 1);
+	semctl(semid, SEM_LOG, SETVAL, 1);
+	semctl(semid, SEM_POJEMNOSC, SETVAL, realna_pojemnosc);
 
 	msgid = msgget(key, IPC_CREAT | 0600);
 	if (msgid == -1) handle_error("msgget");
@@ -125,42 +171,81 @@ int main(int argc, char *argv[]) {
 
 	srand(time(NULL));
 
+	int wygenerowani = 0;
+
 	while(1) {
 		// Sprawdzenie flag konca
 		struct sembuf op[1];
-		op[0].sem_num = SEM_STAN; op[0].sem_op = -1; op[0].sem_flg = 0;
+		op[0].sem_num = SEM_STAN;
+		op[0].sem_op = -1;
+		op[0].sem_flg = 0;
 		semop(semid, op, 1);
 
-		int cur = stan_sklepu->liczba_klientow_w_sklepie;
-		int max = stan_sklepu->max_klientow_sklep;
-		int koniec = stan_sklepu->koniec_symulacji;
-		int ew = stan_sklepu->ewakuacja;
+		int stop = stan_sklepu->koniec_symulacji || stan_sklepu->ewakuacja;
 
-		op[0].sem_op = 1; semop(semid, op, 1);
+		op[0].sem_op = 1;
+		semop(semid, op, 1);
 
-		if (koniec || ew) {
+		if (stop) {
 			printf("[MAIN] Koniec symulacji / Ewakuacja. Zamykam.\n");
 			break;
 		}
 
-		// Generowanie nowego klienta jesli jest miejsce
-		if (cur < max) {
-			pid_t p = fork();
-			if (p == 0) {
-				// Proces potomny zamienia sie w klienta
-				char *args_c[] = {"./klient", NULL};
-				execv("./klient", args_c);
-				perror("Blad execv klient"); // To sie wykona tylko przy bledzie
-                		_exit(1);
-			} else if (p > 0) {
-				// Rodzic nie czeka blokujaco, ale sprzata zombie jesli jakies sa
-				waitpid(-1, NULL, WNOHANG);
+		if (arg_total_klientow > 0 && wygenerowani >= arg_total_klientow) {
+		// Limit osiagniety. Czekamy az wszyscy wyjda.
+		// 10 to liczba wszystkich procesow bez klientow
+			if (policz_aktywne_procesy() <= 10) {
+				printf("[MAIN] Wszyscy klienci obsluzeni (%d). Koniec symulacji.\n", wygenerowani);
+				break;
 			}
+		// Sprzatanie zombie w miedzyczasie
+		int st;
+		pid_t p = waitpid(-1, &st, WNOHANG);
+		if (p > 0) usun_pid(p);
+		usleep(100000); // 0.1s check
+		continue;
 		}
 
-		// Losowy odstep miedzy klientami
-		usleep(500000 + (rand() % 1500000));
-	}
+		int status;
+		pid_t dead_pid;
+		while ((dead_pid = waitpid(-1, &status, WNOHANG)) > 0) {
+			usun_pid(dead_pid);
+		}
 
+		// jesli system przeciazony to nie tworzymy nowych procesow
+		if (policz_aktywne_procesy() >= MAX_SYSTEM_PROCESSES - 10) {
+			usleep(10000); // Czekamy chwile az ktos wyjdzie
+			continue;
+		}
+
+		// generowanie klienta
+		pid_t p = fork();
+		if (p == 0) {
+			char *args_c[] = {"./klient", NULL};
+			execv("./klient", args_c);
+			_exit(1);
+		} else if (p > 0) {
+ 			zapisz_pid(p);
+			wygenerowani++;
+
+
+			if (wygenerowani < realna_pojemnosc) {
+                		// symulowacja tlumu przed sklepem.
+                		// Semafor SEM_POJEMNOSC pilnuje ilosci klientow.
+				usleep(1000);
+ 			}
+			else {
+                		// Sklep jest pelny, reszta klientow przychodzi losowo.
+                		// (0.5s - 2.0s).
+                		if (arg_total_klientow > 0) {
+                			// po zapelnieniu sklepu wracamy do normalnego tempa generowania klientow.
+                     			usleep(500000 + (rand() % 1500000));
+                		} else {
+                     			// Tryb nieskonczony
+					usleep(500000 + (rand() % 1500000));
+				}
+			}
+		}
+	}
 	return 0;
 }

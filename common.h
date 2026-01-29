@@ -29,6 +29,8 @@
 #define DEFAULT_LIMIT_NA_KASE 5 // wczytane K (domyslne 5)
 #define LIMIT_CIERPLIWOSCI 5 // prog po ktorego przekroczeniu klient przejdzie do kasy stacjonarnej
 #define LICZBA_TYPOW_PRODUKTOW 10
+#define HARD_LIMIT_POJEMNOSC 200
+#define MAX_SYSTEM_PROCESSES 250
 // --- STRUKTURY DANYCH ---
 
 typedef struct {
@@ -95,7 +97,8 @@ typedef struct {
 // Definicje indeks w tablicy semaforow
 #define SEM_STAN 0   // Chroni dostep do pamieci wspoldzielonej (StanSklepu)
 #define SEM_LOG 1    // Chroni dostep do pliku logu
-#define LICZBA_SEMAFOROW 2
+#define SEM_POJEMNOSC 2 // pilnuje ilosci klientow w sklepie
+#define LICZBA_SEMAFOROW 3
 
 // --- MAKRA POMOCNICZE ---
 // obsluga bledow

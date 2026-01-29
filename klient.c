@@ -18,15 +18,30 @@ int main() {
 	gettimeofday(&t, NULL);
 	srand(t.tv_usec ^ t.tv_sec ^ my_pid);
 
-	// 1. Wejscie do sklepu (Aktualizacja licznika w Pamieci Dzielonej)
+	// 1. Kolejka przed sklepem
 	struct sembuf operacje[1];
+	operacje[0].sem_num = SEM_POJEMNOSC;
+ 	operacje[0].sem_op = -1;
+ 	operacje[0].sem_flg = 0;
+
+	if (semop(semid, operacje, 1) == -1) {
+        	perror("Blad wejscia (kolejka)");
+        	exit(0);
+ 	}
+
+	// 2. Wejscie do sklepu (Aktualizacja licznika w Pamieci Dzielonej)
 	operacje[0].sem_num = SEM_STAN;
 	operacje[0].sem_op = -1; // P
 	operacje[0].sem_flg = 0;
 	CHECK(semop(semid, operacje, 1), "semop P stan");
 
-	// 2. Sprawdzenie ewakuacji na wejsciu
+	// 3. Sprawdzenie ewakuacji na wejsciu
 	if (stan_sklepu->ewakuacja) {
+		operacje[0].sem_num = SEM_STAN;
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1); // Zwolnij stan
+
+		operacje[0].sem_num = SEM_POJEMNOSC;
 		operacje[0].sem_op = 1;
 		semop(semid, operacje, 1);
 		exit(0); // Sklep zamkniety (alarm) - nie wchodzic
@@ -36,6 +51,7 @@ int main() {
 	stan_sklepu->id_generator++;
 	int nr_klienta = stan_sklepu->id_generator;
 
+	operacje[0].sem_num = SEM_STAN;
 	operacje[0].sem_op = 1; // V
 	CHECK(semop(semid, operacje, 1), "semop V stan");
 
@@ -43,7 +59,7 @@ int main() {
 	sprintf(msg_buf, "Klient %d (PID: %d) wchodzi. Zakupy...", nr_klienta, my_pid);
 	loguj(semid, msg_buf, KOLOR_ZOLTY);
 
-	// 3. Symulacja zakupow (Losowy czas 1-5s)
+	// 4. Symulacja zakupow (Losowy czas 1-5s)
 	int czas_zakupow = (rand() % 5) + 1;
 	sleep(czas_zakupow);
 
@@ -61,7 +77,7 @@ int main() {
                 exit(0);
         }
 
-        // 4. Wybor kasy i przygotowanie komunikatu
+        // 5. Wybor kasy i przygotowanie komunikatu
         Komunikat kom;
         kom.id_klienta = my_pid;
         kom.nr_klienta_sklepu = nr_klienta;
@@ -122,7 +138,7 @@ int main() {
 
         loguj(semid, msg_buf, KOLOR_ZOLTY);
 
-        // 5. Ustawienie sie w kolejce (Wyslanie komunikatu)
+        // 6. Ustawienie sie w kolejce (Wyslanie komunikatu)
         if (msgsnd(msgid, &kom, sizeof(Komunikat) - sizeof(long), 0) == -1) {
                 if (errno == EIDRM || errno == EINVAL) {
                         sprintf(msg_buf, "Klient %d: Kolejka zamknieta (Ewakuacja)! Uciekam!", nr_klienta); // blad wywolany ewakuacja (usunieciem kolejki komunikatow)
@@ -141,7 +157,7 @@ int main() {
                 exit(0);
         }
 
-        // 6. Oczekiwanie na obsluge (Odbior komunikatu zwrotnego na kanal PID)
+        // 7. Oczekiwanie na obsluge (Odbior komunikatu zwrotnego na kanal PID)
         // TU KLIENT ZABLOKUJE SIE DO CZASU AZ KASJER GO OBSLUZY
         Komunikat odpowiedz;
         if (msgrcv(msgid, &odpowiedz, sizeof(Komunikat) - sizeof(long), my_pid, 0) == -1) {
@@ -175,7 +191,8 @@ int main() {
 
         loguj(semid, msg_buf, KOLOR_ZOLTY);
 
-        // 7. Wyjscie ze sklepu
+        // 8. Wyjscie ze sklepu
+	operacje[0].sem_num = SEM_STAN;
 	operacje[0].sem_op = -1; // P
 	CHECK(semop(semid, operacje, 1), "semop P stan wyjscie");
 
@@ -184,5 +201,8 @@ int main() {
 	operacje[0].sem_op = 1; // V
 	CHECK(semop(semid, operacje, 1), "semop V stan wyjscie");
 
+	operacje[0].sem_num = SEM_POJEMNOSC;
+ 	operacje[0].sem_op = 1; // Zwolnij miejsce (+1)
+	CHECK(semop(semid, operacje, 1), "semop V pojemnosc");
 	exit(0);
 }
