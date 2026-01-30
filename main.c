@@ -229,7 +229,7 @@ int main(int argc, char *argv[]) {
 			wygenerowani++;
 
 
-			if (wygenerowani < realna_pojemnosc) {
+			if (arg_total_klientow > 0 && wygenerowani < realna_pojemnosc) {
                 		// symulowacja tlumu przed sklepem.
                 		// Semafor SEM_POJEMNOSC pilnuje ilosci klientow.
 				usleep(1000);

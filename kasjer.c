@@ -102,7 +102,7 @@ int main(int argc, char *argv[]) {
                 operacje[0].sem_op = 1;
                 semop(semid, operacje, 1);
 
-                sprintf(msg_buf, "Kasa Stacjonarna S%d: Obsluguje klienta nr %d (PID: %d) (Prod: %d)",
+                sprintf(msg_buf, "Kasa [S%d] >>> Rozpoczynam obsluge: Klient #%d (PID: %d) | Koszyk: %dszt.",
                                 nr_kasy + 1, kom_odb.nr_klienta_sklepu, kom_odb.id_klienta, kom_odb.liczba_produktow);
                 loguj(semid, msg_buf, KOLOR_NIEBIESKI);
 
