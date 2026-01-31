@@ -59,8 +59,19 @@ int main() {
 	sprintf(msg_buf, "Klient %d (PID: %d) wchodzi. Zakupy...", nr_klienta, my_pid);
 	loguj(semid, msg_buf, KOLOR_ZOLTY);
 
-	// 4. Symulacja zakupow (Losowy czas 1-5s)
-	int czas_zakupow = (rand() % 5) + 1;
+	// 4. Przygotowanie komunikatu
+        Komunikat kom;
+        kom.id_klienta = my_pid;
+        kom.nr_klienta_sklepu = nr_klienta;
+        kom.liczba_produktow = (rand() % (MAX_PRODUKTOW - MIN_PRODUKTOW + 1)) + MIN_PRODUKTOW;
+        kom.czy_alkohol = 0;
+
+	// 5. Symulacja zakupow (czas oparty na ilosci produktow z drobnym elementem losowosci)
+	int czas_bazowy = 1;
+	int czas_na_produkty = kom.liczba_produktow / 3; // co 3 produkty dodatkowa sekunda
+	int czas_zakupow = czas_bazowy + czas_na_produkty;
+	if (rand() % 2 == 0) czas_zakupow++;
+
 	sleep(czas_zakupow);
 
 	if (stan_sklepu->ewakuacja) {
@@ -74,17 +85,15 @@ int main() {
                 stan_sklepu->liczba_klientow_w_sklepie--;
                 operacje[0].sem_op = 1;
                 semop(semid, operacje, 1);
-                exit(0);
+
+		operacje[0].sem_num = SEM_POJEMNOSC;
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+
+	        exit(0);
         }
 
-        // 5. Wybor kasy i przygotowanie komunikatu
-        Komunikat kom;
-        kom.id_klienta = my_pid;
-        kom.nr_klienta_sklepu = nr_klienta;
-        kom.liczba_produktow = (rand() % (MAX_PRODUKTOW - MIN_PRODUKTOW + 1)) + MIN_PRODUKTOW;
-        kom.czy_alkohol = 0;
-
-        // wypelnianie koszyka losowymi produktami z bazy
+	// wypelnianie koszyka losowymi produktami z bazy
         for (int i = 0; i < kom.liczba_produktow; i++) {
                 int idx = rand() % LICZBA_TYPOW_PRODUKTOW; // losowanie produktu z bazy
                 kom.koszyk[i] = idx;
@@ -94,6 +103,7 @@ int main() {
                         kom.czy_alkohol = 1;
                 }
         }
+
 
         // Decyzja: 95% samoobslugowa, 5% stacjonarna
         int los = rand() % 100;
@@ -154,7 +164,11 @@ int main() {
                 stan_sklepu->liczba_klientow_w_sklepie--;
                 operacje[0].sem_op = 1;
                 semop(semid, operacje, 1);
-                exit(0);
+
+		operacje[0].sem_num = SEM_POJEMNOSC;
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+		exit(0);
         }
 
         // 7. Oczekiwanie na obsluge (Odbior komunikatu zwrotnego na kanal PID)
@@ -175,6 +189,10 @@ int main() {
                 stan_sklepu->liczba_klientow_w_sklepie--;
                 operacje[0].sem_op = 1;
                 semop(semid, operacje, 1);
+
+		operacje[0].sem_num = SEM_POJEMNOSC;
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
                 exit(0);
         }
 
