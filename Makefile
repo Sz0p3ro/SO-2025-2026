@@ -1,5 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -std=gnu99
+CFLAGS = -Wall -std=gnu99 -pthread
+LDFLAGS = -pthread
 HEADERS = common.h utils.h
 
 TARGETS = dyskont kasa_samoobslugowa kasjer kierownik obsluga klient

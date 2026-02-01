@@ -1,5 +1,6 @@
 #include "common.h"
 #include "utils.h"
+#include <pthread.h>
 
 int shmid = -1;
 int semid = -1;
@@ -8,16 +9,23 @@ int msgid = -1;
 StanSklepu *stan_sklepu = NULL;
 
 pid_t child_pids[MAX_SYSTEM_PROCESSES]; // tablica PID do sprzatania
-int child_count = 0;
+pthread_mutex_t pid_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_t cleaner_thread;
 
 void sprzataj() {
+	pthread_cancel(cleaner_thread);
+
 	printf("\nKonczenie symulacji, zabijanie procesow potomnych...\n");
+
 	// wysyla SIGTERM do wszystkich uruchomionych procesow
-	for(int i=0; i<child_count; i++) {
+	for(int i=0; i<MAX_SYSTEM_PROCESSES; i++) {
 		if(child_pids[i] > 0) kill(child_pids[i], SIGTERM);
 	}
-	// Czekaj na smierc wszystkich procesow
-	while(wait(NULL) > 0);
+
+	kill(0, SIGTERM);
+
+	// czekaj na smierc wszystkich procesow
+	sleep(1);
 
 	printf("Usuwanie zasobow\n");
 	if (shmid != -1) shmctl(shmid, IPC_RMID, NULL);
@@ -32,30 +40,57 @@ void handle_sigint(int sig) {
 }
 
 void zapisz_pid(pid_t pid) {
+	pthread_mutex_lock(&pid_mutex);
 	for(int i=0; i<MAX_SYSTEM_PROCESSES; i++) {
 		if (child_pids[i] == 0) {
 			child_pids[i] = pid;
-			return;
+			break;
 		}
 	}
+	pthread_mutex_unlock(&pid_mutex);
 }
 
 void usun_pid(pid_t pid) {
+	pthread_mutex_lock(&pid_mutex);
 	for(int i=0; i<MAX_SYSTEM_PROCESSES; i++) {
 		if (child_pids[i] == pid) {
 			child_pids[i] = 0;
-			return;
+			break;
 		}
 	}
+	pthread_mutex_unlock(&pid_mutex);
 }
 
 int policz_aktywne_procesy() {
 	int c = 0;
+	pthread_mutex_lock(&pid_mutex);
 	for(int i=0; i<MAX_SYSTEM_PROCESSES; i++) {
 		if (child_pids[i] != 0) c++;
 	}
+	pthread_mutex_unlock(&pid_mutex);
 	return c;
 }
+
+// watek dziala w tle i wylapuje zakonczone procesy
+void *watek_sprzatajacy(void *arg){
+	pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+	pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+
+	while (1) {
+		int status;
+		pid_t dead_pid = waitpid(-1, &status, 0);
+		if (dead_pid > 0) {
+			usun_pid(dead_pid);
+		}
+		else {
+			if (errno == ECHILD) {
+				sleep(1);
+			}
+		}
+	}
+	return NULL;
+}
+
 
 // funkcja pomocnicza do uruchamiania procesow przy uzyciu exec
 void uruchom_proces(const char *program, char *const args[]) {
@@ -73,6 +108,7 @@ void uruchom_proces(const char *program, char *const args[]) {
 }
 
 int main(int argc, char *argv[]) {
+	setbuf(stdout, NULL);
 	atexit(sprzataj);
 	signal(SIGINT, handle_sigint);
 
@@ -169,6 +205,13 @@ int main(int argc, char *argv[]) {
 
 	printf("Wszystkie procesy uruchomione.\n");
 
+	// uruchomienie watku czyszczacego
+	if (pthread_create(&cleaner_thread, NULL, watek_sprzatajacy, NULL) != 0) {
+		perror("Nie udalo sie utworzyc watku sprzatajacego.\n");
+		exit(1);
+	}
+	printf("Watek sprzatajacy uruchomiony.\n");
+
 	srand(time(NULL));
 
 	int wygenerowani = 0;
@@ -192,24 +235,14 @@ int main(int argc, char *argv[]) {
 		}
 
 		if (arg_total_klientow > 0 && wygenerowani >= arg_total_klientow) {
-		// Limit osiagniety. Czekamy az wszyscy wyjda.
-		// 10 to liczba wszystkich procesow bez klientow
+			// Limit osiagniety. Czekamy az wszyscy wyjda.
+			// 10 to liczba wszystkich procesow bez klientow
 			if (policz_aktywne_procesy() <= 10) {
 				printf("[MAIN] Wszyscy klienci obsluzeni (%d). Koniec symulacji.\n", wygenerowani);
 				break;
 			}
-		// Sprzatanie zombie w miedzyczasie
-		int st;
-		pid_t p = waitpid(-1, &st, WNOHANG);
-		if (p > 0) usun_pid(p);
-		usleep(100000); // 0.1s check
-		continue;
-		}
-
-		int status;
-		pid_t dead_pid;
-		while ((dead_pid = waitpid(-1, &status, WNOHANG)) > 0) {
-			usun_pid(dead_pid);
+			sleep(1);
+			continue;
 		}
 
 		// jesli system przeciazony to nie tworzymy nowych procesow
@@ -228,22 +261,14 @@ int main(int argc, char *argv[]) {
  			zapisz_pid(p);
 			wygenerowani++;
 
-
 			if (arg_total_klientow > 0 && wygenerowani < realna_pojemnosc) {
-                		// symulowacja tlumu przed sklepem.
-                		// Semafor SEM_POJEMNOSC pilnuje ilosci klientow.
+                // symulowacja tlumu przed sklepem.
+                // Semafor SEM_POJEMNOSC pilnuje ilosci klientow.
 				usleep(1000);
  			}
 			else {
-                		// Sklep jest pelny, reszta klientow przychodzi losowo.
-                		// (0.5s - 2.0s).
-                		if (arg_total_klientow > 0) {
-                			// po zapelnieniu sklepu wracamy do normalnego tempa generowania klientow.
-                     			usleep(500000 + (rand() % 1500000));
-                		} else {
-                     			// Tryb nieskonczony
-					usleep(500000 + (rand() % 1500000));
-				}
+                			// sklep jest pelny, reszta klientow przychodzi w losowych odstepach czasowych
+                     		usleep(500000 + (rand() % 1500000));
 			}
 		}
 	}
