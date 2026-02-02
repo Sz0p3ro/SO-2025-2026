@@ -23,7 +23,7 @@ int main() {
 
         signal(SIGUSR1, obsluga_sygnalu_1); // kierownik ma nasluchiwac sygnalu 1
         signal(SIGUSR2, obsluga_sygnalu_2); // sygnalu 2 tez
-        signal(SIGTERM, obsluga_sygnalu_3);
+        signal(SIGQUIT, obsluga_sygnalu_3);
         struct sembuf operacje[1];
         char msg_buf[200];
 

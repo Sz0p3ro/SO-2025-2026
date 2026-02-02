@@ -44,8 +44,12 @@ void loguj(int semid, const char *msg, LogColor color) {
 	}
 
 	operacje[0].sem_op = 1; // Zwolnij (V)
-	if (semop(semid, operacje, 1) == -1 && errno != EINTR) {
-		perror("Log sem post error");
+	if (semop(semid, operacje, 1) == -1) {
+		if (errno == EIDRM || errno == EINVAL) return;
+
+		if (errno != EINTR) perror("Log sem wait error!");
+
+		return;
 	}
 }
 

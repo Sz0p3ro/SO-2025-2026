@@ -18,14 +18,27 @@ void sprzataj() {
 	printf("\nKonczenie symulacji, zabijanie procesow potomnych...\n");
 
 	// wysyla SIGTERM do wszystkich uruchomionych procesow
+	pthread_mutex_lock(&pid_mutex);
 	for(int i=0; i<MAX_SYSTEM_PROCESSES; i++) {
 		if(child_pids[i] > 0) kill(child_pids[i], SIGTERM);
 	}
-
+	pthread_mutex_unlock(&pid_mutex);
 	kill(0, SIGTERM);
 
 	// czekaj na smierc wszystkich procesow
 	sleep(1);
+
+	// dobijanie procesow (na wszelki wypadek)
+	pthread_mutex_lock(&pid_mutex);
+	for(int i=0; i<MAX_SYSTEM_PROCESSES; i++) {
+		if(child_pids[i] > 0) {
+			// sprawdzamy czy proces jeszcze zyje
+			if (kill(child_pids[i], 0) == 0) {
+				kill(child_pids[i], SIGKILL); // zabicie procesu
+			}
+		}
+	}
+	pthread_mutex_unlock(&pid_mutex);
 
 	printf("Usuwanie zasobow\n");
 	if (shmid != -1) shmctl(shmid, IPC_RMID, NULL);
@@ -96,9 +109,11 @@ void *watek_sprzatajacy(void *arg){
 void uruchom_proces(const char *program, char *const args[]) {
 	pid_t pid = fork();
 	if (pid == 0) {
-	// proces potomny
-	execv(program, args);
-	perror("execv failed");
+		signal(SIGTERM, SIG_DFL);
+
+		// proces potomny
+		execv(program, args);
+		perror("execv failed");
 		_exit(1);
 	} else if (pid > 0) {
 		zapisz_pid(pid);
@@ -238,7 +253,7 @@ int main(int argc, char *argv[]) {
 			// Limit osiagniety. Czekamy az wszyscy wyjda.
 			// 10 to liczba wszystkich procesow bez klientow
 			if (policz_aktywne_procesy() <= 10) {
-				printf("[MAIN] Wszyscy klienci obsluzeni (%d). Koniec symulacji.\n", wygenerowani);
+				printf("[MAIN] Wszyscy klienci obsluzeni (%d). Zamykam wszystkie kasy. Koniec symulacji.\n", wygenerowani);
 				break;
 			}
 			sleep(1);
@@ -267,8 +282,8 @@ int main(int argc, char *argv[]) {
 				usleep(1000);
  			}
 			else {
-                			// sklep jest pelny, reszta klientow przychodzi w losowych odstepach czasowych
-                     		usleep(500000 + (rand() % 1500000));
+                // sklep jest pelny, reszta klientow przychodzi w losowych odstepach czasowych
+                usleep(500000 + (rand() % 1500000));
 			}
 		}
 	}

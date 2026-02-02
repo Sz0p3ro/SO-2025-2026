@@ -17,13 +17,15 @@ int main(int argc, char *argv[]) {
 	int nr_kasy = atoi(argv[1]);
 	long my_mtype = 2 + nr_kasy;
 
-	printf("Kasa Stacjonarna S%d startuje (PID: %d, mtype: %ld)\n", nr_kasy + 1, getpid(), my_mtype);
+	//printf("Kasa Stacjonarna S%d startuje (PID: %d, mtype: %ld)\n", nr_kasy + 1, getpid(), my_mtype);
 
         char msg_buf[200];
         Komunikat kom_odb;
         Komunikat kom_nad;
         struct sembuf operacje[1];
         int czas_bezczynnosci = 0; // Licznik czasu bezczynnosci
+
+	int poprzedni_status = 0;
 
         while (1) {
                 // 1. Sprawdzenie czy kasa jest OTWARTA
@@ -40,12 +42,26 @@ int main(int argc, char *argv[]) {
                 operacje[0].sem_op = 1;
                 semop(semid, operacje, 1);
 
-                if (status == 0 && len_kolejki == 0) {
-                        // Kasa zamknieta - kasjer czeka na decyzje kierownika
-                        czas_bezczynnosci = 0; // Reset licznika jak jest zamknieta
-                        usleep(500000); // 0.5s
-                        continue;
-                }
+		if (status != poprzedni_status) {
+                	if (status == 1 && poprzedni_status == 0) {
+                        	// kasa zostala otwarta przez kierownika
+				sprintf(msg_buf, "Kasa S%d: Otwieram stanowisko! Zapraszam klientow.", nr_kasy + 1);
+ 				loguj(semid, msg_buf, KOLOR_NIEBIESKI);
+				czas_bezczynnosci = 0;
+                	}
+			else if (status == 0 && poprzedni_status == 1) {
+				// kasa została zamknieta przez kierownika lub sygnal
+				sprintf(msg_buf, "Kasa S%d: Zamykam stanowisko.", nr_kasy + 1);
+				loguj(semid, msg_buf, KOLOR_NIEBIESKI);
+			}
+            	poprzedni_status = status; // aktualizujemy stan wiedzy  kasjera
+		}
+
+		if (status == 0) {
+			// co 0.2s sprwadzamy czy Kierownik nie otworzyl kasy
+			usleep(200000);
+			continue;
+		}
 
                 // 2. Proba pobrania klienta
                 // Uzywamy IPC_NOWAIT, zeby sprawdzic czy ktos jest, a jak nie ma, to liczyc czas
