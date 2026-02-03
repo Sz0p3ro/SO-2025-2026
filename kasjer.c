@@ -17,27 +17,26 @@ int main(int argc, char *argv[]) {
 	int nr_kasy = atoi(argv[1]);
 	long my_mtype = 2 + nr_kasy;
 
-	//printf("Kasa Stacjonarna S%d startuje (PID: %d, mtype: %ld)\n", nr_kasy + 1, getpid(), my_mtype);
-
         char msg_buf[200];
         Komunikat kom_odb;
         Komunikat kom_nad;
         struct sembuf operacje[1];
-        int czas_bezczynnosci = 0; // Licznik czasu bezczynnosci
+        int czas_bezczynnosci = 0; // licznik czasu bezczynnosci
 
 	int poprzedni_status = 0;
+	int tryb_zamykania = 0;
 
         while (1) {
                 // 1. Sprawdzenie czy kasa jest OTWARTA
                 int status;
-                int len_kolejki;
+		int len_kolejki;
 
                 operacje[0].sem_num = SEM_STAN;
                 operacje[0].sem_op = -1;
                 semop(semid, operacje, 1);
 
-                status = stan_sklepu->kasy_stacjonarne_status[nr_kasy];
-                len_kolejki = stan_sklepu->kolejka_stacjonarna_len[nr_kasy];
+		status = stan_sklepu->kasy_stacjonarne_status[nr_kasy];
+		len_kolejki = stan_sklepu->kolejka_stacjonarna_len[nr_kasy];
 
                 operacje[0].sem_op = 1;
                 semop(semid, operacje, 1);
@@ -48,19 +47,31 @@ int main(int argc, char *argv[]) {
 				sprintf(msg_buf, "Kasa S%d: Otwieram stanowisko! Zapraszam klientow.", nr_kasy + 1);
  				loguj(semid, msg_buf, KOLOR_NIEBIESKI);
 				czas_bezczynnosci = 0;
+				tryb_zamykania = 0;
                 	}
 			else if (status == 0 && poprzedni_status == 1) {
 				// kasa została zamknieta przez kierownika lub sygnal
 				sprintf(msg_buf, "Kasa S%d: Zamykam stanowisko.", nr_kasy + 1);
 				loguj(semid, msg_buf, KOLOR_NIEBIESKI);
+				tryb_zamykania = 1;
 			}
             	poprzedni_status = status; // aktualizujemy stan wiedzy  kasjera
 		}
 
-		if (status == 0) {
-			// co 0.2s sprwadzamy czy Kierownik nie otworzyl kasy
-			usleep(200000);
-			continue;
+		if (status == 0 ) {
+			if (tryb_zamykania == 1) {
+				if (len_kolejki > 0) {
+				}
+				else {
+					tryb_zamykania = 0;
+					usleep(200000);
+					continue;
+				}
+			}
+			else {
+				usleep(200000);
+				continue;
+			}
 		}
 
                 // 2. Proba pobrania klienta
@@ -69,6 +80,7 @@ int main(int argc, char *argv[]) {
                         if (errno == ENOMSG) {
                                 if (status == 0) {
                                         // czekamy na kolejny obieg petli, ktory zablokuje sie wyzej
+					tryb_zamykania = 0;
                                         usleep(100000);
                                         continue;
                                 }
@@ -118,8 +130,7 @@ int main(int argc, char *argv[]) {
                 operacje[0].sem_op = 1;
                 semop(semid, operacje, 1);
 
-                sprintf(msg_buf, "Kasa [S%d] >>> Rozpoczynam obsluge: Klient #%d (PID: %d) | Koszyk: %dszt.",
-                                nr_kasy + 1, kom_odb.nr_klienta_sklepu, kom_odb.id_klienta, kom_odb.liczba_produktow);
+                sprintf(msg_buf, "Kasa [S%d] >>> Rozpoczynam obsluge: Klient #%d (PID: %d) | Koszyk: %dszt.", nr_kasy + 1, kom_odb.nr_klienta_sklepu, kom_odb.id_klienta, kom_odb.liczba_produktow);
                 loguj(semid, msg_buf, KOLOR_NIEBIESKI);
 
                 // Symulacja kasowania (0.2s na produkt)

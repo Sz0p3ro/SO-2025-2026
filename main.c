@@ -17,28 +17,23 @@ void sprzataj() {
 
 	printf("\nKonczenie symulacji, zabijanie procesow potomnych...\n");
 
-	// wysyla SIGTERM do wszystkich uruchomionych procesow
-	pthread_mutex_lock(&pid_mutex);
-	for(int i=0; i<MAX_SYSTEM_PROCESSES; i++) {
-		if(child_pids[i] > 0) kill(child_pids[i], SIGTERM);
+	if (stan_sklepu != NULL) {
+		stan_sklepu->ewakuacja = 1;
 	}
-	pthread_mutex_unlock(&pid_mutex);
-	kill(0, SIGTERM);
 
-	// czekaj na smierc wszystkich procesow
-	sleep(1);
+	signal(SIGUSR2, SIG_IGN);
+	kill(0, SIGUSR2);
 
-	// dobijanie procesow (na wszelki wypadek)
-	pthread_mutex_lock(&pid_mutex);
+	sleep(5);
+
 	for(int i=0; i<MAX_SYSTEM_PROCESSES; i++) {
-		if(child_pids[i] > 0) {
-			// sprawdzamy czy proces jeszcze zyje
-			if (kill(child_pids[i], 0) == 0) {
-				kill(child_pids[i], SIGKILL); // zabicie procesu
-			}
+		if(child_pids[i] > 0 && child_pids[i] != getpid()) {
+			kill(child_pids[i], SIGKILL);
 		}
 	}
-	pthread_mutex_unlock(&pid_mutex);
+
+	// czekaj na smierc wszystkich procesow
+	while(wait(NULL) > 0);
 
 	printf("Usuwanie zasobow\n");
 	if (shmid != -1) shmctl(shmid, IPC_RMID, NULL);
@@ -277,13 +272,13 @@ int main(int argc, char *argv[]) {
 			wygenerowani++;
 
 			if (arg_total_klientow > 0 && wygenerowani < realna_pojemnosc) {
-                // symulowacja tlumu przed sklepem.
-                // Semafor SEM_POJEMNOSC pilnuje ilosci klientow.
+                		// symulowacja tlumu przed sklepem.
+                		// Semafor SEM_POJEMNOSC pilnuje ilosci klientow.
 				usleep(1000);
  			}
 			else {
-                // sklep jest pelny, reszta klientow przychodzi w losowych odstepach czasowych
-                usleep(500000 + (rand() % 1500000));
+                		// sklep jest pelny, reszta klientow przychodzi w losowych odstepach czasowych
+                     		usleep(500000 + (rand() % 1500000));
 			}
 		}
 	}

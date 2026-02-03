@@ -118,16 +118,26 @@ int main() {
         int s1_len = stan_sklepu->kolejka_stacjonarna_len[0];
         int s2_len = stan_sklepu->kolejka_stacjonarna_len[1];
 
+	operacje[0].sem_op = 1; // V
+	semop(semid, operacje, 1);
+
         if (chce_samoobsluge && !(len_samo > LIMIT_CIERPLIWOSCI && (s1_stat || s2_stat))) {
                 // samoobslugowa
                 kom.mtype = 1;
-                stan_sklepu->kolejka_samoobslugowa_len++;
+
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+
+		stan_sklepu->kolejka_samoobslugowa_len++;
+
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
 
                 sprintf(msg_buf, "Klient %d idzie do samoobslugowej (Prod: %d, Alk: %d)", nr_klienta, kom.liczba_produktow, kom.czy_alkohol);
         }
         else {
                 // stacjonarna
-                int wybrana_kasa = 0; // Domyslnie S1
+                int wybrana_kasa = 0; // domyslnie s1
 
                 if (s1_stat == 1 && s2_stat == 1) {
                         // jest obie otwarte idzie tam gdzie jest krotsza kolejka
@@ -137,14 +147,45 @@ int main() {
                         wybrana_kasa = 1;
                 }
 
-                kom.mtype = 2 + wybrana_kasa; // 2 dla S1, 3 dla S2
-                stan_sklepu->kolejka_stacjonarna_len[wybrana_kasa]++;
+		operacje[0].sem_op = -1;
+		semop(semid, operacje, 1);
+
+		stan_sklepu->kolejka_stacjonarna_len[wybrana_kasa]++;
+
+		operacje[0].sem_op = 1;
+		semop(semid, operacje, 1);
+
+		// jesli obie kasy sa otwarte i klient stoi w kolejce to kasy S1 to moze zmienic kolejke i isc do kasy S2
+		if (wybrana_kasa == 0) {
+			sprintf(msg_buf, "Klient %d stanal w kolejce do kasy S1", nr_klienta);
+			loguj(semid, msg_buf, KOLOR_ZOLTY);
+
+                        usleep(500000 + (rand() % 500000));
+
+                        // ponowne sprawdzenie statusu S2
+			operacje[0].sem_num = SEM_STAN;
+			operacje[0].sem_op = -1;
+			semop(semid, operacje, 1);
+
+			int s2_teraz_otwarta = (stan_sklepu->kasy_stacjonarne_status[1] == 1);
+
+			// 5% na to ze klient zmieni kolejke
+			if (s2_teraz_otwarta && (rand() % 100 < 5)) {
+				stan_sklepu->kolejka_stacjonarna_len[0]--; // wychodze z S1
+				stan_sklepu->kolejka_stacjonarna_len[1]++; // wchodze do S2
+				wybrana_kasa = 1;
+
+				sprintf(msg_buf, "Klient %d: Zmieniam kolejke. Przechodze z S1 do S2.", nr_klienta);
+				loguj(semid, msg_buf, KOLOR_ZOLTY);
+			}
+			operacje[0].sem_op = 1;
+			semop(semid, operacje, 1);
+		}
+
+		kom.mtype = 2 + wybrana_kasa; // 2 dla S1, 3 dla S2
 
                 sprintf(msg_buf, "Klient %d idzie do kasy S%d (Prod: %d)", nr_klienta, wybrana_kasa + 1, kom.liczba_produktow);
         }
-
-        operacje[0].sem_op = 1; // V
-        semop(semid, operacje, 1);
 
         loguj(semid, msg_buf, KOLOR_ZOLTY);
 
