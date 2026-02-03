@@ -1,35 +1,13 @@
-# Dokumentacja Testów
-
 Dokument zawiera opis i wyniki czterech testów sprawdzających kluczowe funkcjonalności projektu
 
-## Test 1: Walidacja danych i skalowalność
-**Cel:** Sprawdzenie, czy program reaguje na błędne argumenty oraz czy kasy są poprawnie otwierane przy większej ilości klientów.
+## Test 1: Stress test IPC + skalowalność
+**Cel:** Sprawdzenie poprawności synchronizacji (semafory) i przesyłania danych (kolejki komunikatów) w warunkach, gdy liczba chętnych klientów znacznie przewyższa pojemność sklepu.
 
-**WALIDACJA ARGUMENTÓW**
-* Akcja: Uruchomienie symulacji z błędnym argumentem: `./dyskont -50 5`, `./dyskont @ kf`
-* Oczekiwany wynik: Komunikat błędu i natychmiastowe wyjście.
-* **Wynik (Log):**
+* Akcja: Uruchomienie symulacji z parametrami 20 5 100 [limit klientow w sklepie w jednym momencie] [zmienna do obliczania ilości wymaganych kas] [liczba klientow którą chcemy wygenerować na start]
+* Oczekiwany wynik: Brak zamrożenia, symulacja przebiega poprawnie i sklep zamyka się po obsłużeniu 100 klientów.
+* **Wynik:**
 ```
-Blad: Argumenty musza byc liczba calkowita dodatnia!
-Uzycie: ./dyskont [max_klientow] [limit_kasa]
-
-Konczenie symulacji, zabijanie procesow potomnych...
-Usuwanie zasobow
-Gotowe
-```
-**w obu przypadkach walidacja zadziałała poprawnie**
-
-* Akcja: Uruchomienie symulacji z jednym argumentem: `./dyskont 4`
-* Oczekiwany wynik: Symulacja uruchamia się z wartością podaną przez użytkownika, natomiast druga wartość zostaje ustawiona domyślnie
-* **Wynik (Log):**
-```
-Start symulacji. Konfiguracja: N=4, K=5
-Wszystkie procesy uruchomione.
-Kasa Stacjonarna S1 startuje (PID: 11303, mtype: 2)
-Kasa Stacjonarna S2 startuje (PID: 11304, mtype: 3)
-Kasa samoobslugowa 6 startuje (PID: 11302)
-Pracownik obslugi zaczyna prace (PID: 11305)
-...
+Wynik zgodny z oczekiwaniami.
 ```
 **SKALOWALNOŚĆ**
 * Akcja: Uruchomienie symulacji z dużym limitem klientów w sklepie i z małym limitem klientów na kasę: `./dyskont 70 1`
@@ -41,7 +19,7 @@ Kasa stacjonarna uruchamia się prawie po minucie, bo przez to, że mamy dużo k
 na tą do kasy stacjonarnej (bo czas oczekiwania do kasy samoobsługowej jest krótki).
 Jeśli chcielibyśmy zaobserwować dosyć szybkie uruchomienie pierwszej kasy stacjonarnej powinniśmy uruchomić symulację z parametrami domyślnymi.
 ```
-## Test 2: Obsługa zdarzeń losowych (awaria/alkohol)
+## Test 2: Obsługa zdarzeń losowych (awaria/alkohol) + weryfikacja zgodności paragonów z logami
 **Cel:** Weryfikacja interakcji pomiędzy kasami samoobsługowymi, a pracownikiem obsługi.
 * Akcja: Uruchomienie symulacji z domyślnymi argumentami: `./dyskont` oraz obserwacja logów.
 * Oczekiwany wynik: kasa zgłasza alkohol lub awarię, po chwili obsługa idzie zatwierdzić alkohol lub odblokować kasę.
@@ -69,6 +47,35 @@ AWARIA:
 Możemy zaobserwować poprawne działanie symulacji. 
 Kasy ulegają awarii, obsługa je naprawia, kasy wznawiają pracę. 
 (łącznie dostajemy 4 komunikaty dla jednej awarii/blokady alkoholowej)
+```
+
+**weryfikacja zgodności logów z plikiem paragony.txt**
+* Akcja: Uruchomienie symulacji z domyślnymi argumentami: `./dyskont`. Po ok. 30s. zatrzymujemy symulację.
+Przeglądając raport.txt wybieramy jakiegoś klienta, który kupował alkohol. Zapisujemy liczbę artykułów, które zakupił oraz numer tego klienta.
+Następnie sprawdzamy tego samego klienta w pliku paragony.txt i weryfikujemy czy liczba artykułów jest zgodna, oraz czy faktycznie kupował alkohol.
+* Oczekiwany wynik: dane z obu plików będą ze sobą zgodne.
+* **Wynik:**
+```
+z pliku raport.txt:
+
+[Wed Jan 21 12:15:08 2026] Kasa Samoobsl. 4: Obsluguje klienta nr 2 (PID: 13696) (Prod: 5, Alk: 1)
+
+z pliku paragony.txt:
+
+------------------------------------------
+ PARAGON - KLIENT NR: 2
+------------------------------------------
+NAZWA           | ILOSC  | CENA
+------------------------------------------
+Chleb           | x1     | 4.15 PLN
+Maslo           | x2     | 13.00 PLN
+Czekolada       | x1     | 5.50 PLN
+Piwo            | x1     | 4.00 PLN
+------------------------------------------
+ RAZEM:                       26.65 PLN
+------------------------------------------
+
+Widzimy, że liczba produktów się zgadza oraz że klient ten faktycznie dokonał zakupu alkoholu.
 ```
 
 ## Test 3: Działanie sygnałów
@@ -102,7 +109,7 @@ Wynik jest zgodny z oczekiwaniami, na czerwono można zaobserwować odpowiednie 
 [Wed Jan 21 12:59:17 2026] Kierownik: Otrzymalem SYGNAL 2, ale wszystkie kasy stacjonarne sa juz zamkniete.
 ```
 #### Sprawdzenie działania sygnału 3
-* Akcja: Uruchomienie symulacji z domyślnymi argumentami: `./dyskont`. Dajemy symulacji ok. 30s. ,aby klienci byli na różnych etapach zakupów, a następnie w drugim terminalu wpisujemy komendę: killall -SIGTERM kierownik.
+* Akcja: Uruchomienie symulacji z domyślnymi argumentami: `./dyskont`. Dajemy symulacji ok. 30s. ,aby klienci byli na różnych etapach zakupów, a następnie w drugim terminalu wpisujemy komendę: killall -SIGQUIT kierownik.
 * Oczekiwany wynik: kierownik ogłasza ewakuację (widzimy czerwony komunikat), wszyscy **natychmiastowo** opuszczają sklep, symulacja się kończy
 * **Wynik (log):**
 ```
@@ -120,34 +127,29 @@ Konczenie symulacji, zabijanie procesow potomnych...
 [Wed Jan 21 12:00:55 2026] Kierownik: Sklep pusty. Ewakuacja zakonczona. Koniec symulacji.
 ```
 
-## Test 4: Poprawność transakcji i generowania paragonów
+## Test 4: Test fork bomb
 
-* Akcja: Uruchomienie symulacji z domyślnymi argumentami: `./dyskont`. Po ok. 30s. zatrzymujemy symulację.
-Przeglądając raport.txt wybieramy jakiegoś klienta, który kupował alkohol. Zapisujemy liczbę artykułów, które zakupił oraz numer tego klienta.
-Następnie sprawdzamy tego samego klienta w pliku paragony.txt i weryfikujemy czy liczba artykułów jest zgodna, oraz czy faktycznie kupował alkohol.
-* Oczekiwany wynik: dane z obu plików będą ze sobą zgodne.
+* Akcja: Uruchomienie symulacji z domyślnymi argumentami: `./dyskont 100 5 5000`
+* Oczekiwany wynik: Mimo ogromnego obciążenia, proces główny powinien poprawnie przechwycić sygnał przerwania. Funkcja sprzątająca musi zabić wszystkie 200+ procesów potomnych (Klienci, Kasjerzy, Obsługa), a następnie usunąć semafory i pamięć współdzieloną. Polecenie ps po zakończeniu testu nie powinno pokazać żadnych aktywnych procesów dyskont ani klient.
 * **Wynik:**
 ```
-z pliku raport.txt:
+ps
+    PID TTY          TIME CMD
+   3539 pts/3    00:00:00 bash
+ 116279 pts/3    00:00:00 ps
 
-[Wed Jan 21 12:15:08 2026] Kasa Samoobsl. 4: Obsluguje klienta nr 2 (PID: 13696) (Prod: 5, Alk: 1)
+ipcs
 
-z pliku paragony.txt:
+------ Message Queues --------
+key        msqid      owner      perms      used-bytes   messages    
 
-------------------------------------------
- PARAGON - KLIENT NR: 2
-------------------------------------------
-NAZWA           | ILOSC  | CENA
-------------------------------------------
-Chleb           | x1     | 4.15 PLN
-Maslo           | x2     | 13.00 PLN
-Czekolada       | x1     | 5.50 PLN
-Piwo            | x1     | 4.00 PLN
-------------------------------------------
- RAZEM:                       26.65 PLN
-------------------------------------------
+------ Shared Memory Segments --------
+key        shmid      owner      perms      bytes      nattch     status      
 
-Widzimy, że liczba produktów się zgadza oraz że klient ten faktycznie dokonał zakupu alkoholu.
+------ Semaphore Arrays --------
+key        semid      owner      perms      nsems
+
+System poprawnie obsłużył przeciążenie procesami i posprzątał zasoby.
 ```
 
 
